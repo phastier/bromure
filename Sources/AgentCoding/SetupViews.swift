@@ -136,8 +136,10 @@ struct SetupView: View {
         VStack(spacing: 18) {
             Spacer()
             if let icon = NSApp.applicationIconImage {
+                icon.size = NSSize(width: 96, height: 96)
                 Image(nsImage: icon)
                     .resizable()
+                    .interpolation(.high)
                     .frame(width: 96, height: 96)
             }
             Text("Welcome to Bromure Agentic Coding")
@@ -180,8 +182,10 @@ struct InitializingView: View {
         VStack(spacing: 16) {
             HStack(spacing: 12) {
                 if let icon = NSApp.applicationIconImage {
+                    icon.size = NSSize(width: 36, height: 36)
                     Image(nsImage: icon)
                         .resizable()
+                        .interpolation(.high)
                         .frame(width: 36, height: 36)
                 }
                 VStack(alignment: .leading, spacing: 2) {

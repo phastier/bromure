@@ -73,8 +73,10 @@ struct ProfilePickerView: View {
             // styling.
             HStack(spacing: 10) {
                 if let icon = NSApp.applicationIconImage {
+                    icon.size = NSSize(width: 40, height: 40)
                     Image(nsImage: icon)
                         .resizable()
+                        .interpolation(.high)
                         .frame(width: 40, height: 40)
                 }
                 VStack(alignment: .leading, spacing: 1) {
@@ -301,7 +303,7 @@ enum EditorCategory: String, CaseIterable, Identifiable {
         case .folders:     "folder.fill"
         case .credentials: "key.fill"
         case .environment: "terminal.fill"
-        case .mcp:         "puzzle.piece.fill"
+        case .mcp:         "network"
         case .tracing:     "doc.text.magnifyingglass"
         case .appearance:  "paintpalette.fill"
         case .resources:   "memorychip.fill"
@@ -455,9 +457,7 @@ struct ProfileEditorView: View {
                     Label {
                         Text(category.rawValue)
                     } icon: {
-                        Image(systemName: category.symbol)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white)
+                        categoryIcon(category)
                             .frame(width: 22, height: 22)
                             .background(category.color.gradient,
                                         in: RoundedRectangle(cornerRadius: 5))
@@ -527,6 +527,25 @@ struct ProfileEditorView: View {
         case .tracing:     tracingSection
         case .appearance:  appearanceSection
         case .resources:   resourcesSection
+        }
+    }
+
+    @ViewBuilder
+    private func categoryIcon(_ category: EditorCategory) -> some View {
+        if category == .mcp, let url = Bundle.module.url(forResource: "mcp", withExtension: "svg", subdirectory: "icons"),
+           let data = try? Data(contentsOf: url),
+           let svgImage = NSImage(data: data) {
+            Image(nsImage: svgImage)
+                .renderingMode(.template)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 16, height: 16)
+                .foregroundStyle(.white)
+        } else {
+            Image(systemName: category.symbol)
+                .font(.system(size: 12))
+                .foregroundStyle(.white)
         }
     }
 
@@ -2236,6 +2255,7 @@ private struct EnvironmentVariableRow: View {
 private struct MCPServerRow: View {
     @Binding var server: MCPServer
     var onRemove: () -> Void
+    @State private var showJSON = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -2243,50 +2263,149 @@ private struct MCPServerRow: View {
                 TextField("Name", text: $server.name, prompt: Text("my-server"))
                     .textFieldStyle(.roundedBorder)
                     .frame(maxWidth: 180)
-                Picker("", selection: $server.transport) {
-                    ForEach(MCPServer.Transport.allCases, id: \.self) { t in
-                        Text(t.rawValue.uppercased()).tag(t)
+                if !showJSON {
+                    Picker("", selection: $server.transport) {
+                        ForEach(MCPServer.Transport.allCases, id: \.self) { t in
+                            Text(t.rawValue.uppercased()).tag(t)
+                        }
                     }
+                    .pickerStyle(.segmented)
+                    .frame(width: 120)
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 120)
                 Toggle("", isOn: $server.enabled)
                     .toggleStyle(.switch)
                     .labelsHidden()
                     .help(server.enabled ? "Enabled" : "Disabled")
                 Spacer()
+                Button {
+                    if !showJSON && server.rawJSON.isEmpty {
+                        server.rawJSON = generateJSON()
+                    }
+                    showJSON.toggle()
+                } label: {
+                    Image(systemName: showJSON ? "slider.horizontal.3" : "curlybraces")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderless)
+                .help(showJSON ? "Switch to form" : "Edit as JSON")
                 Button(action: onRemove) {
                     Image(systemName: "minus.circle")
                 }
                 .buttonStyle(.borderless)
                 .help("Remove this server")
             }
-            switch server.transport {
-            case .stdio:
-                HStack(spacing: 6) {
-                    TextField("Command", text: $server.command, prompt: Text("npx"))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 140)
-                    TextField("Arguments", text: Binding(
-                        get: { server.arguments.joined(separator: " ") },
-                        set: { server.arguments = $0.components(separatedBy: " ").filter { !$0.isEmpty } }
-                    ), prompt: Text("-y @upstash/context7-mcp"))
-                        .textFieldStyle(.roundedBorder)
-                }
-            case .http:
-                HStack(spacing: 6) {
-                    TextField("URL", text: $server.url, prompt: Text("https://mcp.example.com/mcp"))
-                        .textFieldStyle(.roundedBorder)
-                    TextField("Bearer token env var", text: $server.bearerTokenEnvVar, prompt: Text("MY_TOKEN"))
-                        .textFieldStyle(.roundedBorder)
-                        .frame(maxWidth: 180)
-                }
+            if showJSON {
+                jsonEditor
+            } else {
+                formFields
             }
         }
         .padding(8)
         .background(Color(nsColor: .textBackgroundColor),
                     in: RoundedRectangle(cornerRadius: 6))
         .opacity(server.enabled ? 1.0 : 0.6)
+        .onAppear {
+            if !server.rawJSON.isEmpty { showJSON = true }
+        }
+    }
+
+    @ViewBuilder
+    private var formFields: some View {
+        switch server.transport {
+        case .stdio:
+            HStack(spacing: 6) {
+                TextField("Command", text: $server.command, prompt: Text("npx"))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 140)
+                TextField("Arguments", text: Binding(
+                    get: { server.arguments.joined(separator: " ") },
+                    set: { server.arguments = $0.components(separatedBy: " ").filter { !$0.isEmpty } }
+                ), prompt: Text("-y @upstash/context7-mcp"))
+                    .textFieldStyle(.roundedBorder)
+            }
+        case .http:
+            TextField("URL", text: $server.url, prompt: Text("https://mcp.example.com/mcp"))
+                .textFieldStyle(.roundedBorder)
+            DisclosureGroup("Authentication") {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Text("Env var name")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 80, alignment: .trailing)
+                        TextField("", text: $server.bearerTokenEnvVar,
+                                  prompt: Text("e.g. FIGMA_OAUTH_TOKEN"))
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    if !server.bearerTokenEnvVar.isEmpty {
+                        HStack(spacing: 6) {
+                            Text("Token")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 80, alignment: .trailing)
+                            SecureField("", text: $server.bearerToken,
+                                        prompt: Text("Never sent to VM — swapped by proxy"))
+                                .textFieldStyle(.roundedBorder)
+                        }
+                    }
+                }
+                .padding(.top, 2)
+            }
+            .font(.caption)
+        }
+    }
+
+    private var jsonEditor: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Raw JSON config — passed directly to the agent's MCP config file.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            TextEditor(text: $server.rawJSON)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(minHeight: 80, maxHeight: 160)
+                .scrollContentBackground(.hidden)
+                .padding(4)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(jsonValid ? Color.clear : Color.red.opacity(0.5))
+                )
+            if !jsonValid {
+                Text("Invalid JSON")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private var jsonValid: Bool {
+        guard !server.rawJSON.isEmpty,
+              let data = server.rawJSON.data(using: .utf8) else { return true }
+        return (try? JSONSerialization.jsonObject(with: data)) != nil
+    }
+
+    private func generateJSON() -> String {
+        var obj: [String: Any] = [:]
+        switch server.transport {
+        case .stdio:
+            obj["command"] = server.command
+            if !server.arguments.isEmpty { obj["args"] = server.arguments }
+        case .http:
+            obj["type"] = "http"
+            obj["url"] = server.url
+            if !server.bearerTokenEnvVar.isEmpty {
+                obj["bearerTokenEnvVar"] = server.bearerTokenEnvVar
+            }
+        }
+        let env = server.environment.filter(\.isUsable)
+        if !env.isEmpty {
+            obj["env"] = env.reduce(into: [String: String]()) { $0[$1.name] = $1.value }
+        }
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]
+        ), let str = String(data: data, encoding: .utf8) else { return "{}" }
+        return str
     }
 }
 

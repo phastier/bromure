@@ -535,8 +535,8 @@ public struct MCPServer: Codable, Equatable, Sendable, Identifiable {
     public var name: String
 
     public enum Transport: String, Codable, CaseIterable, Sendable {
-        case stdio
         case http
+        case stdio
     }
     public var transport: Transport
 
@@ -549,7 +549,14 @@ public struct MCPServer: Codable, Equatable, Sendable, Identifiable {
 
     public var bearerTokenEnvVar: String
 
+    public var bearerToken: String
+
     public var enabled: Bool
+
+    /// When non-empty, this raw JSON is used as the server config
+    /// instead of the structured fields above. Allows arbitrary
+    /// MCP config shapes (OAuth blocks, custom fields, etc.).
+    public var rawJSON: String
 
     public var startupTimeoutSec: Int?
     public var toolTimeoutSec: Int?
@@ -557,13 +564,15 @@ public struct MCPServer: Codable, Equatable, Sendable, Identifiable {
     public init(
         id: UUID = UUID(),
         name: String = "",
-        transport: Transport = .stdio,
+        transport: Transport = .http,
         command: String = "",
         arguments: [String] = [],
         url: String = "",
         environment: [EnvironmentVariable] = [],
         bearerTokenEnvVar: String = "",
+        bearerToken: String = "",
         enabled: Bool = true,
+        rawJSON: String = "",
         startupTimeoutSec: Int? = nil,
         toolTimeoutSec: Int? = nil
     ) {
@@ -575,9 +584,16 @@ public struct MCPServer: Codable, Equatable, Sendable, Identifiable {
         self.url = url
         self.environment = environment
         self.bearerTokenEnvVar = bearerTokenEnvVar
+        self.bearerToken = bearerToken
         self.enabled = enabled
+        self.rawJSON = rawJSON
         self.startupTimeoutSec = startupTimeoutSec
         self.toolTimeoutSec = toolTimeoutSec
+    }
+
+    public var urlHost: String? {
+        guard transport == .http, let parsed = URL(string: url) else { return nil }
+        return parsed.host
     }
 
     public var isUsable: Bool {
