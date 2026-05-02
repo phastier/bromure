@@ -101,6 +101,31 @@ final class HTTPMitmConnection: @unchecked Sendable {
         // 4. Read the wrapped HTTP request through TLS.
         let request = try readRawHTTPRequest(via: tls, maxBytes: 8 * 1024 * 1024)
 
+        // 4a. Block OAuth/OIDC discovery for MCP hosts that have a
+        // broker token. Claude Code probes multiple .well-known paths;
+        // if any returns metadata it insists on its own auth flow
+        // (which can't work inside the VM). Return 404 for all of
+        // them so Claude Code treats the server as unauthenticated
+        // and the proxy's header injection handles auth transparently.
+        let (_, reqPath) = Self.parseRequestLine(request)
+        let isDiscovery = reqPath.hasPrefix("/.well-known/oauth-authorization-server")
+            || reqPath.hasPrefix("/.well-known/oauth-protected-resource")
+            || reqPath.hasPrefix("/.well-known/openid-configuration")
+        if isDiscovery {
+            let hasMCPBearer = swapper.entries(for: profileID)
+                .contains { $0.host == host && $0.fake.hasPrefix("brm-mcp_") }
+            if hasMCPBearer {
+                FileHandle.standardError.write(Data(
+                    "[mitm] blocked OAuth discovery for \(host) — using broker token\n".utf8))
+                let body = "Not Found"
+                var resp = "HTTP/1.1 404 Not Found\r\n"
+                resp += "Content-Type: text/plain\r\nContent-Length: \(body.utf8.count)\r\n"
+                resp += "Connection: close\r\n\r\n\(body)"
+                try? tls.write(Data(resp.utf8))
+                return
+            }
+        }
+
         // Pre-swap: scan for unswapped Bearer / x-api-key tokens. The
         // trace store records these as `LeakEntry` values so the user
         // sees exactly which secrets escaped the swap pipeline.
@@ -172,12 +197,35 @@ final class HTTPMitmConnection: @unchecked Sendable {
             }
         }
 
+        // 5b. MCP bearer header injection. For MCP servers whose OAuth
+        // was brokered on the host, Claude Code doesn't know about the
+        // token — it just sees a plain URL. Inject the real bearer
+        // token as an Authorization header so the upstream server
+        // accepts the request. Only fires when the request doesn't
+        // already carry an Authorization header.
+        var postSwap = swap.modified
+        if let mcpReal = swapper.entries(for: profileID)
+            .first(where: { $0.host == host && $0.fake.hasPrefix("brm-mcp_") })?.real {
+            if let reqStr = String(data: postSwap, encoding: .utf8),
+               !reqStr.lowercased().contains("\r\nauthorization:") {
+                if let headerEnd = reqStr.range(of: "\r\n\r\n") {
+                    let authHeader = "Authorization: Bearer \(mcpReal)\r\n"
+                    var modified = reqStr[..<headerEnd.lowerBound]
+                    modified += "\r\n" + authHeader
+                    modified += reqStr[headerEnd.lowerBound...]
+                    postSwap = Data(modified.utf8)
+                    FileHandle.standardError.write(Data(
+                        "[mitm] injected MCP bearer for \(host)\n".utf8))
+                }
+            }
+        }
+
         // 6a. WebSocket upgrade — bypass URLSession (which can't
         //     surface the 101 + raw bidirectional byte stream) and
         //     do a manual TLS-client connect + opaque pump. Used by
         //     OpenAI's Realtime API and any other agent transport
         //     that rides on WS instead of plain HTTP/SSE.
-        if isWebSocketUpgrade(rawRequest: swap.modified) {
+        if isWebSocketUpgrade(rawRequest: postSwap) {
             FileHandle.standardError.write(Data(
                 "[mitm] WebSocket upgrade → \(host):\(port)\n".utf8))
             // Decide body capture *before* the pump so we don't pay
@@ -191,7 +239,7 @@ final class HTTPMitmConnection: @unchecked Sendable {
             // already capturing bodies on this host (managed AI
             // hosts) — otherwise the per-frame JSON parse is wasted
             // work for raw passthrough WebSockets.
-            let (_, reqPath) = Self.parseRequestLine(swap.modified)
+            let (_, reqPath) = Self.parseRequestLine(postSwap)
             let realtimeTap: RealtimeEventTap? = captureBody
                 ? RealtimeEventTap(
                     profileID: profileID,
@@ -201,7 +249,7 @@ final class HTTPMitmConnection: @unchecked Sendable {
                 : nil
             let result = try await handleWebSocketUpgrade(
                 serverTLS: tls,
-                rawRequest: swap.modified,
+                rawRequest: postSwap,
                 host: host, port: port,
                 captureBody: captureBody,
                 onUpstreamMessage: realtimeTap.map { tap in
@@ -237,10 +285,10 @@ final class HTTPMitmConnection: @unchecked Sendable {
         //     opaque InvalidSignatureException after a round-trip.
         let toForward: Data
         let resignOutcome = await awsResigner.resign(
-            rawRequest: swap.modified, host: host, profileID: profileID)
+            rawRequest: postSwap, host: host, profileID: profileID)
         switch resignOutcome {
         case .unchanged:
-            toForward = swap.modified
+            toForward = postSwap
         case .resigned(let bytes):
             toForward = bytes
         case .denied(let response):

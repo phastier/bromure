@@ -1385,6 +1385,10 @@ struct ProfileSecrets: Codable {
     /// reals; on the wire the proxy swaps fakes back to reals.
     var defaultClaudeTokens: StoredOAuthTokens?
     var defaultCodexTokens: StoredOAuthTokens?
+    /// MCP server bearer tokens. Keyed by MCPServer.id.uuidString.
+    var mcpBearerTokens: [String: String]?
+    /// MCP OAuth state blobs. Keyed by MCPServer.id.uuidString.
+    var mcpOAuthStates: [String: MCPOAuthState]?
 
     var isEmpty: Bool {
         (apiKey?.isEmpty ?? true)
@@ -1398,6 +1402,8 @@ struct ProfileSecrets: Codable {
             && (dockerRegistryPasswords?.isEmpty ?? true)
             && defaultClaudeTokens == nil
             && defaultCodexTokens == nil
+            && (mcpBearerTokens?.isEmpty ?? true)
+            && (mcpOAuthStates?.isEmpty ?? true)
     }
 
     /// Pull every secret string out of the profile, replacing them
@@ -1468,6 +1474,19 @@ struct ProfileSecrets: Codable {
             profile.defaultCodexTokens = nil
         }
 
+        for (i, server) in profile.mcpServers.enumerated() {
+            if !server.bearerToken.isEmpty {
+                if s.mcpBearerTokens == nil { s.mcpBearerTokens = [:] }
+                s.mcpBearerTokens?[server.id.uuidString] = server.bearerToken
+                profile.mcpServers[i].bearerToken = ""
+            }
+            if let oauth = server.oauthState {
+                if s.mcpOAuthStates == nil { s.mcpOAuthStates = [:] }
+                s.mcpOAuthStates?[server.id.uuidString] = oauth
+                profile.mcpServers[i].oauthState = nil
+            }
+        }
+
         return s
     }
 
@@ -1508,6 +1527,20 @@ struct ProfileSecrets: Codable {
         }
         if let t = defaultClaudeTokens { profile.defaultClaudeTokens = t }
         if let t = defaultCodexTokens { profile.defaultCodexTokens = t }
+        if let map = mcpBearerTokens {
+            for (i, server) in profile.mcpServers.enumerated() {
+                if let t = map[server.id.uuidString] {
+                    profile.mcpServers[i].bearerToken = t
+                }
+            }
+        }
+        if let map = mcpOAuthStates {
+            for (i, server) in profile.mcpServers.enumerated() {
+                if let state = map[server.id.uuidString] {
+                    profile.mcpServers[i].oauthState = state
+                }
+            }
+        }
     }
 }
 

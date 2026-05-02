@@ -1,12 +1,15 @@
-import AuthenticationServices
+import AppKit
 import CryptoKit
 import Foundation
 
 /// Handles MCP OAuth discovery, dynamic client registration, and
 /// authorization-code-with-PKCE flow for HTTP MCP servers. Runs entirely
 /// on the host — the VM never sees real OAuth credentials.
+///
+/// Uses a localhost HTTP listener for the OAuth callback because MCP
+/// servers (e.g. Fellow) reject custom URL schemes in redirect_uris.
 @MainActor
-public final class MCPOAuthBroker: NSObject, ASWebAuthenticationPresentationContextProviding {
+public final class MCPOAuthBroker {
 
     public enum BrokerError: Error, LocalizedError {
         case discoveryFailed(String)
@@ -48,9 +51,6 @@ public final class MCPOAuthBroker: NSObject, ASWebAuthenticationPresentationCont
         public let registrationEndpoint: String?
     }
 
-    private static let callbackScheme = "bromure-ac-oauth"
-    private static let redirectURI = "bromure-ac-oauth://callback"
-
     // MARK: - Public API
 
     public func authorizeServer(url: String) async throws -> AuthResult {
@@ -58,9 +58,13 @@ public final class MCPOAuthBroker: NSObject, ASWebAuthenticationPresentationCont
             throw BrokerError.discoveryFailed("Invalid URL")
         }
         let metadata = try await discoverMetadata(serverURL: serverURL)
-        let client = try await registerClient(metadata: metadata, serverURL: serverURL)
-        let (code, verifier) = try await authorize(metadata: metadata, client: client)
-        return try await exchangeCode(code, metadata: metadata, client: client, codeVerifier: verifier)
+        let (redirectURI, port) = try startCallbackListener()
+        let client = try await registerClient(metadata: metadata, redirectURI: redirectURI)
+        let (code, verifier) = try await authorize(
+            metadata: metadata, client: client, redirectURI: redirectURI, port: port)
+        return try await exchangeCode(
+            code, metadata: metadata, client: client,
+            codeVerifier: verifier, redirectURI: redirectURI)
     }
 
     public static func refresh(state: MCPOAuthState) async throws -> MCPOAuthState {
@@ -99,6 +103,86 @@ public final class MCPOAuthBroker: NSObject, ASWebAuthenticationPresentationCont
         return updated
     }
 
+    // MARK: - Localhost Callback Listener (POSIX socket)
+
+    private var listenFD: Int32 = -1
+
+    private func startCallbackListener() throws -> (redirectURI: String, port: UInt16) {
+        let fd = socket(AF_INET, SOCK_STREAM, 0)
+        guard fd >= 0 else {
+            throw BrokerError.discoveryFailed("Cannot create socket")
+        }
+        var reuse: Int32 = 1
+        setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &reuse, socklen_t(MemoryLayout<Int32>.size))
+
+        var addr = sockaddr_in()
+        addr.sin_len = UInt8(MemoryLayout<sockaddr_in>.size)
+        addr.sin_family = sa_family_t(AF_INET)
+        addr.sin_port = 0  // OS picks a free port
+        addr.sin_addr.s_addr = UInt32(INADDR_LOOPBACK).bigEndian
+        let bindResult = withUnsafePointer(to: &addr) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) { bind(fd, $0, socklen_t(MemoryLayout<sockaddr_in>.size)) }
+        }
+        guard bindResult == 0 else {
+            close(fd)
+            throw BrokerError.discoveryFailed("Cannot bind to loopback")
+        }
+        guard listen(fd, 1) == 0 else {
+            close(fd)
+            throw BrokerError.discoveryFailed("Cannot listen on socket")
+        }
+        var bound = sockaddr_in()
+        var len = socklen_t(MemoryLayout<sockaddr_in>.size)
+        withUnsafeMutablePointer(to: &bound) {
+            $0.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                _ = getsockname(fd, $0, &len)
+            }
+        }
+        let port = UInt16(bigEndian: bound.sin_port)
+        self.listenFD = fd
+        return ("http://127.0.0.1:\(port)/callback", port)
+    }
+
+    private func waitForCallback(state: String) async throws -> String {
+        let fd = self.listenFD
+        guard fd >= 0 else { throw BrokerError.authorizationCancelled }
+        return try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let client = accept(fd, nil, nil)
+                defer {
+                    close(client)
+                    close(fd)
+                }
+                guard client >= 0 else {
+                    continuation.resume(throwing: BrokerError.authorizationCancelled)
+                    return
+                }
+                var buf = [UInt8](repeating: 0, count: 8192)
+                let n = recv(client, &buf, buf.count, 0)
+                guard n > 0,
+                      let raw = String(bytes: buf[..<n], encoding: .utf8),
+                      let requestLine = raw.components(separatedBy: "\r\n").first,
+                      let pathPart = requestLine.split(separator: " ").dropFirst().first,
+                      let components = URLComponents(string: String(pathPart)),
+                      let code = components.queryItems?.first(where: { $0.name == "code" })?.value,
+                      let returnedState = components.queryItems?.first(where: { $0.name == "state" })?.value,
+                      returnedState == state else {
+                    let body = "Authorization failed."
+                    let resp = "HTTP/1.1 400 Bad Request\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+                    _ = send(client, resp, resp.utf8.count, 0)
+                    continuation.resume(throwing: BrokerError.tokenExchangeFailed(
+                        "Invalid callback — missing code or state mismatch"))
+                    return
+                }
+                let body = "<html><body style=\"font-family:system-ui;text-align:center;padding:60px\">" +
+                    "<h2>Authorized</h2><p>You can close this tab and return to Bromure AC.</p></body></html>"
+                let resp = "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\nContent-Length: \(body.utf8.count)\r\nConnection: close\r\n\r\n\(body)"
+                _ = send(client, resp, resp.utf8.count, 0)
+                continuation.resume(returning: code)
+            }
+        }
+    }
+
     // MARK: - Discovery (RFC 8414)
 
     private func discoverMetadata(serverURL: URL) async throws -> AuthMetadata {
@@ -133,14 +217,16 @@ public final class MCPOAuthBroker: NSObject, ASWebAuthenticationPresentationCont
 
     // MARK: - Dynamic Client Registration (RFC 7591)
 
-    private func registerClient(metadata: AuthMetadata, serverURL: URL) async throws -> ClientRegistration {
+    private func registerClient(
+        metadata: AuthMetadata, redirectURI: String
+    ) async throws -> ClientRegistration {
         guard let regURL = metadata.registrationEndpoint else {
             throw BrokerError.registrationFailed(
                 "Server does not support dynamic client registration")
         }
         let payload: [String: Any] = [
             "client_name": "Bromure AC",
-            "redirect_uris": [Self.redirectURI],
+            "redirect_uris": [redirectURI],
             "grant_types": ["authorization_code"],
             "response_types": ["code"],
             "token_endpoint_auth_method": "none",
@@ -151,8 +237,9 @@ public final class MCPOAuthBroker: NSObject, ASWebAuthenticationPresentationCont
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse, (200...201).contains(http.statusCode) else {
+            let body = String(data: data, encoding: .utf8) ?? ""
             throw BrokerError.registrationFailed(
-                "HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0)")
+                "HTTP \((response as? HTTPURLResponse)?.statusCode ?? 0): \(body)")
         }
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
               let clientID = json["client_id"] as? String else {
@@ -164,11 +251,13 @@ public final class MCPOAuthBroker: NSObject, ASWebAuthenticationPresentationCont
         )
     }
 
-    // MARK: - Authorization (PKCE + ASWebAuthenticationSession)
+    // MARK: - Authorization (PKCE + System Browser)
 
     private func authorize(
         metadata: AuthMetadata,
-        client: ClientRegistration
+        client: ClientRegistration,
+        redirectURI: String,
+        port: UInt16
     ) async throws -> (code: String, verifier: String) {
         let verifier = Self.generateCodeVerifier()
         let challenge = Self.codeChallenge(for: verifier)
@@ -179,7 +268,7 @@ public final class MCPOAuthBroker: NSObject, ASWebAuthenticationPresentationCont
         components.queryItems = [
             URLQueryItem(name: "response_type", value: "code"),
             URLQueryItem(name: "client_id", value: client.clientID),
-            URLQueryItem(name: "redirect_uri", value: Self.redirectURI),
+            URLQueryItem(name: "redirect_uri", value: redirectURI),
             URLQueryItem(name: "code_challenge", value: challenge),
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "state", value: state),
@@ -187,32 +276,8 @@ public final class MCPOAuthBroker: NSObject, ASWebAuthenticationPresentationCont
         guard let authURL = components.url else {
             throw BrokerError.discoveryFailed("Cannot construct authorization URL")
         }
-        let callbackURL: URL = try await withCheckedThrowingContinuation { continuation in
-            let session = ASWebAuthenticationSession(
-                url: authURL,
-                callbackURLScheme: Self.callbackScheme
-            ) { url, error in
-                if let error = error as? ASWebAuthenticationSessionError,
-                   error.code == .canceledLogin {
-                    continuation.resume(throwing: BrokerError.authorizationCancelled)
-                } else if let error {
-                    continuation.resume(throwing: error)
-                } else if let url {
-                    continuation.resume(returning: url)
-                } else {
-                    continuation.resume(throwing: BrokerError.authorizationCancelled)
-                }
-            }
-            session.presentationContextProvider = self
-            session.prefersEphemeralWebBrowserSession = true
-            session.start()
-        }
-        guard let cbComponents = URLComponents(url: callbackURL, resolvingAgainstBaseURL: false),
-              let code = cbComponents.queryItems?.first(where: { $0.name == "code" })?.value,
-              let returnedState = cbComponents.queryItems?.first(where: { $0.name == "state" })?.value,
-              returnedState == state else {
-            throw BrokerError.tokenExchangeFailed("Invalid callback — missing code or state mismatch")
-        }
+        NSWorkspace.shared.open(authURL)
+        let code = try await waitForCallback(state: state)
         return (code, verifier)
     }
 
@@ -222,12 +287,13 @@ public final class MCPOAuthBroker: NSObject, ASWebAuthenticationPresentationCont
         _ code: String,
         metadata: AuthMetadata,
         client: ClientRegistration,
-        codeVerifier: String
+        codeVerifier: String,
+        redirectURI: String
     ) async throws -> AuthResult {
         var body = [
             "grant_type=authorization_code",
             "code=\(Self.formEncode(code))",
-            "redirect_uri=\(Self.formEncode(Self.redirectURI))",
+            "redirect_uri=\(Self.formEncode(redirectURI))",
             "client_id=\(Self.formEncode(client.clientID))",
             "code_verifier=\(Self.formEncode(codeVerifier))",
         ]
@@ -257,14 +323,6 @@ public final class MCPOAuthBroker: NSObject, ASWebAuthenticationPresentationCont
             tokenEndpoint: metadata.tokenEndpoint.absoluteString,
             registrationEndpoint: metadata.registrationEndpoint?.absoluteString
         )
-    }
-
-    // MARK: - ASWebAuthenticationPresentationContextProviding
-
-    public func presentationAnchor(
-        for session: ASWebAuthenticationSession
-    ) -> ASPresentationAnchor {
-        NSApp.keyWindow ?? NSApp.windows.first { $0.isVisible } ?? NSApp.windows[0]
     }
 
     // MARK: - PKCE Helpers

@@ -2281,6 +2281,8 @@ private struct MCPServerRow: View {
                 Button {
                     if !showJSON && server.rawJSON.isEmpty {
                         server.rawJSON = generateJSON()
+                    } else if showJSON {
+                        server.rawJSON = ""
                     }
                     showJSON.toggle()
                 } label: {
@@ -2439,8 +2441,6 @@ private struct MCPServerRow: View {
                 }
             } catch MCPOAuthBroker.BrokerError.authorizationCancelled {
                 // User cancelled — no error to show.
-            } catch MCPOAuthBroker.BrokerError.discoveryFailed {
-                authError = "Server doesn't support OAuth"
             } catch {
                 authError = error.localizedDescription
             }

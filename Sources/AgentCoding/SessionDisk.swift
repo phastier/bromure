@@ -326,6 +326,12 @@ public final class SessionDisk {
             for (envName, fake) in plan.manualEnvExports {
                 lines.append("export \(envName)=\(shellQuote(fake))")
             }
+            // MCP bearer tokens — Claude Code reads bearerTokenEnvVar
+            // from the system environment for HTTP servers, not from
+            // the config's env block.
+            for entry in plan.mcpBearerFakes where !entry.envVarName.isEmpty {
+                lines.append("export \(entry.envVarName)=\(shellQuote(entry.fake))")
+            }
         }
 
         lines.append("export BROMURE_AC_TOOL=\(profile.tool.rawValue)")
@@ -625,7 +631,9 @@ public final class SessionDisk {
         for server in servers {
             // Raw JSON mode: parse and use as-is (allows OAuth blocks,
             // custom fields, or any config shape the form can't express).
-            if !server.rawJSON.isEmpty,
+            // Skip raw JSON if a fake token is available — the structured
+            // path handles token injection; raw JSON can't.
+            if !server.rawJSON.isEmpty, fakes[server.name] == nil,
                let data = server.rawJSON.data(using: .utf8),
                let raw = try? JSONSerialization.jsonObject(with: data) as? [String: Any] {
                 mcpServers[server.name] = raw
@@ -643,13 +651,19 @@ public final class SessionDisk {
             case .http:
                 entry["type"] = "http"
                 entry["url"] = server.url
-                if let swap = fakes[server.name] {
-                    if !swap.envVar.isEmpty {
-                        entry["bearerTokenEnvVar"] = swap.envVar
-                        env[swap.envVar] = swap.fake
+                // OAuth-brokered servers: proxy injects the real
+                // Authorization header transparently — no auth fields
+                // in the config. Static bearer tokens still use the
+                // env var path.
+                if server.oauthState == nil {
+                    if let swap = fakes[server.name] {
+                        if !swap.envVar.isEmpty {
+                            entry["bearerTokenEnvVar"] = swap.envVar
+                            env[swap.envVar] = swap.fake
+                        }
+                    } else if !server.bearerTokenEnvVar.isEmpty {
+                        entry["bearerTokenEnvVar"] = server.bearerTokenEnvVar
                     }
-                } else if !server.bearerTokenEnvVar.isEmpty {
-                    entry["bearerTokenEnvVar"] = server.bearerTokenEnvVar
                 }
             }
             if !env.isEmpty {
