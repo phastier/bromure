@@ -1872,6 +1872,8 @@ final class ACAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // via prepareHomeDirectory and the meta share. The plan is
         // deterministic in (real value, install salt) so Claude Code
         // doesn't see the fake rotate session-to-session.
+        var profile = profile
+        populateMCPBearerTokens(in: &profile)
         let salt = mitmEngine?.fakeTokenSalt ?? Data(repeating: 0, count: 32)
         let plan = profile.makeTokenPlan(salt: salt)
         // (prepareHomeDirectory call moved below — needs the
@@ -2741,15 +2743,18 @@ final class ACAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             // directory the new agent doesn't see yet.
             try? await Task.sleep(for: .milliseconds(500))
 
+            var profile = profile
+            self.populateMCPBearerTokens(in: &profile)
+
             let sessionDisk = SessionDisk(
                 profile: profile,
                 store: store,
                 baseDiskURL: imageManager.baseDiskURL
             )
-            let salt = mitmEngine?.fakeTokenSalt ?? Data(repeating: 0, count: 32)
+            let salt = self.mitmEngine?.fakeTokenSalt ?? Data(repeating: 0, count: 32)
             let plan = profile.makeTokenPlan(salt: salt)
             sessionDisk.tokenPlan = plan
-            if let engine = mitmEngine, let scriptURL = bridgeScriptURL {
+            if let engine = self.mitmEngine, let scriptURL = self.bridgeScriptURL {
                 sessionDisk.mitmAssets = SessionDisk.MitmSessionAssets(
                     caCertificatePEM: engine.ca.certificatePEM,
                     bridgeScriptURL: scriptURL,
@@ -3212,6 +3217,15 @@ final class ACAppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return Profile(name: "", tool: .claude, authMode: .token)
         }
         return p
+    }
+
+    private func populateMCPBearerTokens(in profile: inout Profile) {
+        for i in profile.mcpServers.indices {
+            guard profile.mcpServers[i].enabled,
+                  profile.mcpServers[i].transport == .http,
+                  let oauth = profile.mcpServers[i].oauthState else { continue }
+            profile.mcpServers[i].bearerToken = oauth.accessToken
+        }
     }
 }
 

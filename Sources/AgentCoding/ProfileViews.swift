@@ -73,8 +73,7 @@ struct ProfilePickerView: View {
             // styling.
             HStack(spacing: 10) {
                 if let icon = NSApp.applicationIconImage {
-                    icon.size = NSSize(width: 40, height: 40)
-                    Image(nsImage: icon)
+                    Image(nsImage: { $0.size = NSSize(width: 40, height: 40); return $0 }(icon))
                         .resizable()
                         .interpolation(.high)
                         .frame(width: 40, height: 40)
@@ -317,7 +316,7 @@ enum EditorCategory: String, CaseIterable, Identifiable {
         case .folders:     .orange
         case .credentials: .green
         case .environment: .teal
-        case .mcp:         .cyan
+        case .mcp:         .blue
         case .tracing:     .red
         case .appearance:  .pink
         case .resources:   .gray
@@ -2256,6 +2255,8 @@ private struct MCPServerRow: View {
     @Binding var server: MCPServer
     var onRemove: () -> Void
     @State private var showJSON = false
+    @State private var isAuthorizing = false
+    @State private var authError: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -2327,7 +2328,52 @@ private struct MCPServerRow: View {
             TextField("URL", text: $server.url, prompt: Text("https://mcp.example.com/mcp"))
                 .textFieldStyle(.roundedBorder)
             DisclosureGroup("Authentication") {
-                VStack(alignment: .leading, spacing: 4) {
+                VStack(alignment: .leading, spacing: 6) {
+                    // OAuth section
+                    if !server.url.isEmpty {
+                        HStack(spacing: 8) {
+                            if server.oauthState != nil {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text("Authorized")
+                                    .font(.caption)
+                                if let exp = server.oauthState?.expiresAt {
+                                    Text("expires \(exp, style: .relative)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("Re-authorize") { authorizeOAuth() }
+                                    .font(.caption)
+                                    .disabled(isAuthorizing)
+                                Button("Revoke") {
+                                    server.oauthState = nil
+                                    server.bearerToken = ""
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                            } else {
+                                Button(isAuthorizing ? "Authorizing\u{2026}" : "Authorize with OAuth\u{2026}") {
+                                    authorizeOAuth()
+                                }
+                                .font(.caption)
+                                .disabled(isAuthorizing)
+                                if let err = authError {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(.orange)
+                                    Text(err)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+                        }
+                        Divider()
+                        Text("Or enter a static token:")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    // Manual token fields
                     HStack(spacing: 6) {
                         Text("Env var name")
                             .font(.caption)
@@ -2336,6 +2382,7 @@ private struct MCPServerRow: View {
                         TextField("", text: $server.bearerTokenEnvVar,
                                   prompt: Text("e.g. FIGMA_OAUTH_TOKEN"))
                             .textFieldStyle(.roundedBorder)
+                            .disabled(server.oauthState != nil)
                     }
                     if !server.bearerTokenEnvVar.isEmpty {
                         HStack(spacing: 6) {
@@ -2343,15 +2390,60 @@ private struct MCPServerRow: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .frame(width: 80, alignment: .trailing)
-                            SecureField("", text: $server.bearerToken,
-                                        prompt: Text("Never sent to VM — swapped by proxy"))
-                                .textFieldStyle(.roundedBorder)
+                            if server.oauthState != nil {
+                                Text("Managed by OAuth")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                SecureField("", text: $server.bearerToken,
+                                            prompt: Text("Never sent to VM — swapped by proxy"))
+                                    .textFieldStyle(.roundedBorder)
+                            }
                         }
                     }
                 }
                 .padding(.top, 2)
             }
             .font(.caption)
+        }
+    }
+
+    private func authorizeOAuth() {
+        guard !isAuthorizing else { return }
+        isAuthorizing = true
+        authError = nil
+        Task { @MainActor in
+            defer { isAuthorizing = false }
+            do {
+                let broker = MCPOAuthBroker()
+                let result = try await broker.authorizeServer(url: server.url)
+                server.oauthState = MCPOAuthState(
+                    clientID: result.clientID,
+                    clientSecret: result.clientSecret,
+                    authorizationEndpoint: result.authorizationEndpoint,
+                    tokenEndpoint: result.tokenEndpoint,
+                    registrationEndpoint: result.registrationEndpoint,
+                    accessToken: result.accessToken,
+                    refreshToken: result.refreshToken,
+                    expiresAt: result.expiresIn.map {
+                        Date().addingTimeInterval(TimeInterval($0))
+                    }
+                )
+                server.bearerToken = result.accessToken
+                if server.bearerTokenEnvVar.isEmpty {
+                    let sanitized = server.name
+                        .uppercased()
+                        .replacingOccurrences(of: " ", with: "_")
+                        .replacingOccurrences(of: "-", with: "_")
+                    server.bearerTokenEnvVar = "MCP_OAUTH_\(sanitized)"
+                }
+            } catch MCPOAuthBroker.BrokerError.authorizationCancelled {
+                // User cancelled — no error to show.
+            } catch MCPOAuthBroker.BrokerError.discoveryFailed {
+                authError = "Server doesn't support OAuth"
+            } catch {
+                authError = error.localizedDescription
+            }
         }
     }
 

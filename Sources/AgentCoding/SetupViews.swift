@@ -136,8 +136,7 @@ struct SetupView: View {
         VStack(spacing: 18) {
             Spacer()
             if let icon = NSApp.applicationIconImage {
-                icon.size = NSSize(width: 96, height: 96)
-                Image(nsImage: icon)
+                Image(nsImage: { $0.size = NSSize(width: 96, height: 96); return $0 }(icon))
                     .resizable()
                     .interpolation(.high)
                     .frame(width: 96, height: 96)
@@ -182,8 +181,7 @@ struct InitializingView: View {
         VStack(spacing: 16) {
             HStack(spacing: 12) {
                 if let icon = NSApp.applicationIconImage {
-                    icon.size = NSSize(width: 36, height: 36)
-                    Image(nsImage: icon)
+                    Image(nsImage: { $0.size = NSSize(width: 36, height: 36); return $0 }(icon))
                         .resizable()
                         .interpolation(.high)
                         .frame(width: 36, height: 36)

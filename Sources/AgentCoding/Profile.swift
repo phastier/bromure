@@ -561,6 +561,11 @@ public struct MCPServer: Codable, Equatable, Sendable, Identifiable {
     public var startupTimeoutSec: Int?
     public var toolTimeoutSec: Int?
 
+    /// OAuth state obtained by the host-side broker. When non-nil the
+    /// bearer token is managed — the broker populates `bearerToken`
+    /// from `oauthState.accessToken` and refreshes it on launch.
+    public var oauthState: MCPOAuthState?
+
     public init(
         id: UUID = UUID(),
         name: String = "",
@@ -574,7 +579,8 @@ public struct MCPServer: Codable, Equatable, Sendable, Identifiable {
         enabled: Bool = true,
         rawJSON: String = "",
         startupTimeoutSec: Int? = nil,
-        toolTimeoutSec: Int? = nil
+        toolTimeoutSec: Int? = nil,
+        oauthState: MCPOAuthState? = nil
     ) {
         self.id = id
         self.name = name
@@ -589,6 +595,7 @@ public struct MCPServer: Codable, Equatable, Sendable, Identifiable {
         self.rawJSON = rawJSON
         self.startupTimeoutSec = startupTimeoutSec
         self.toolTimeoutSec = toolTimeoutSec
+        self.oauthState = oauthState
     }
 
     public var urlHost: String? {
@@ -602,6 +609,43 @@ public struct MCPServer: Codable, Equatable, Sendable, Identifiable {
         case .stdio: return hasName && !command.trimmingCharacters(in: .whitespaces).isEmpty
         case .http:  return hasName && !url.trimmingCharacters(in: .whitespaces).isEmpty
         }
+    }
+}
+
+/// OAuth tokens and client registration obtained by the host-side broker
+/// for an HTTP MCP server. Persisted in the profile so the access token
+/// can be refreshed across sessions without re-authorizing.
+public struct MCPOAuthState: Codable, Equatable, Sendable {
+    public var clientID: String
+    public var clientSecret: String?
+    public var authorizationEndpoint: String
+    public var tokenEndpoint: String
+    public var registrationEndpoint: String?
+    public var accessToken: String
+    public var refreshToken: String?
+    public var expiresAt: Date?
+    public var authorizedAt: Date
+
+    public init(
+        clientID: String,
+        clientSecret: String? = nil,
+        authorizationEndpoint: String,
+        tokenEndpoint: String,
+        registrationEndpoint: String? = nil,
+        accessToken: String,
+        refreshToken: String? = nil,
+        expiresAt: Date? = nil,
+        authorizedAt: Date = Date()
+    ) {
+        self.clientID = clientID
+        self.clientSecret = clientSecret
+        self.authorizationEndpoint = authorizationEndpoint
+        self.tokenEndpoint = tokenEndpoint
+        self.registrationEndpoint = registrationEndpoint
+        self.accessToken = accessToken
+        self.refreshToken = refreshToken
+        self.expiresAt = expiresAt
+        self.authorizedAt = authorizedAt
     }
 }
 
