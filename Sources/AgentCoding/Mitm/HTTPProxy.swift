@@ -162,7 +162,7 @@ final class HTTPMitmConnection: @unchecked Sendable {
 
         // 5. Swap tokens. host param is the SNI name; entries that
         //    don't match are no-ops.
-        let swap = await swapper.swap(rawRequest: request, host: host, profileID: profileID)
+        var swap = await swapper.swap(rawRequest: request, host: host, profileID: profileID)
         if !swap.swaps.isEmpty {
             for s in swap.swaps {
                 FileHandle.standardError.write(Data(
@@ -203,17 +203,16 @@ final class HTTPMitmConnection: @unchecked Sendable {
         // token as an Authorization header so the upstream server
         // accepts the request. Only fires when the request doesn't
         // already carry an Authorization header.
-        var postSwap = swap.modified
         if let mcpReal = swapper.entries(for: profileID)
             .first(where: { $0.host == host && $0.fake.hasPrefix("brm-mcp_") })?.real {
-            if let reqStr = String(data: postSwap, encoding: .utf8),
+            if let reqStr = String(data: swap.modified, encoding: .utf8),
                !reqStr.lowercased().contains("\r\nauthorization:") {
                 if let headerEnd = reqStr.range(of: "\r\n\r\n") {
                     let authHeader = "Authorization: Bearer \(mcpReal)\r\n"
                     var modified = reqStr[..<headerEnd.lowerBound]
                     modified += "\r\n" + authHeader
                     modified += reqStr[headerEnd.lowerBound...]
-                    postSwap = Data(modified.utf8)
+                    swap.modified = Data(modified.utf8)
                     FileHandle.standardError.write(Data(
                         "[mitm] injected MCP bearer for \(host)\n".utf8))
                 }
@@ -225,7 +224,7 @@ final class HTTPMitmConnection: @unchecked Sendable {
         //     do a manual TLS-client connect + opaque pump. Used by
         //     OpenAI's Realtime API and any other agent transport
         //     that rides on WS instead of plain HTTP/SSE.
-        if isWebSocketUpgrade(rawRequest: postSwap) {
+        if isWebSocketUpgrade(rawRequest: swap.modified) {
             FileHandle.standardError.write(Data(
                 "[mitm] WebSocket upgrade → \(host):\(port)\n".utf8))
             // Decide body capture *before* the pump so we don't pay
@@ -239,7 +238,7 @@ final class HTTPMitmConnection: @unchecked Sendable {
             // already capturing bodies on this host (managed AI
             // hosts) — otherwise the per-frame JSON parse is wasted
             // work for raw passthrough WebSockets.
-            let (_, reqPath) = Self.parseRequestLine(postSwap)
+            let (_, reqPath) = Self.parseRequestLine(swap.modified)
             let realtimeTap: RealtimeEventTap? = captureBody
                 ? RealtimeEventTap(
                     profileID: profileID,
@@ -249,7 +248,7 @@ final class HTTPMitmConnection: @unchecked Sendable {
                 : nil
             let result = try await handleWebSocketUpgrade(
                 serverTLS: tls,
-                rawRequest: postSwap,
+                rawRequest: swap.modified,
                 host: host, port: port,
                 captureBody: captureBody,
                 onUpstreamMessage: realtimeTap.map { tap in
@@ -285,10 +284,10 @@ final class HTTPMitmConnection: @unchecked Sendable {
         //     opaque InvalidSignatureException after a round-trip.
         let toForward: Data
         let resignOutcome = await awsResigner.resign(
-            rawRequest: postSwap, host: host, profileID: profileID)
+            rawRequest: swap.modified, host: host, profileID: profileID)
         switch resignOutcome {
         case .unchanged:
-            toForward = postSwap
+            toForward = swap.modified
         case .resigned(let bytes):
             toForward = bytes
         case .denied(let response):
