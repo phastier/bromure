@@ -208,6 +208,25 @@ struct MCPConfigTests {
         #expect(toml.contains("bearer_token_env_var"))
     }
 
+    @Test("Codex TOML omits bearer_token_env_var for OAuth-brokered servers")
+    func codexTomlOAuthNoBearerEnvVar() {
+        var server = MCPServer(
+            name: "fellow",
+            transport: .http,
+            url: "https://fellow.app/mcp",
+            bearerTokenEnvVar: "MCP_OAUTH_FELLOW"
+        )
+        server.oauthState = MCPOAuthState(
+            clientID: "test-client",
+            authorizationEndpoint: "https://fellow.app/oauth/authorize",
+            tokenEndpoint: "https://fellow.app/oauth/token",
+            accessToken: "at_live"
+        )
+        let toml = SessionDisk.codexMCPConfig(servers: [server], fakes: [:])
+        #expect(toml.contains("url = "))
+        #expect(!toml.contains("bearer_token_env_var"))
+    }
+
     @Test("Codex TOML skips raw JSON servers")
     func codexTomlSkipsRawJSON() {
         let server = MCPServer(
