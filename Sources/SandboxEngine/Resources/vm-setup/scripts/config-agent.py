@@ -771,7 +771,7 @@ def write_dynamic_policy(cfg):
     ext_ids = [eid for eid in cfg.get("userExtensionIDs", []) if _VALID_EXT_ID.match(eid)]
     if ext_ids:
         policy["ExtensionsToolbarAccessEnabled"] = True
-        ext_settings = {"*": {"installation_mode": "blocked"}}
+        ext_settings = {}
         for ext_id in ext_ids:
             ext_settings[ext_id] = {
                 "installation_mode": "force_installed",
