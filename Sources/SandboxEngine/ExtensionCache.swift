@@ -3,6 +3,10 @@ import Foundation
 public actor ExtensionCache {
     public static let shared = ExtensionCache()
 
+    public static func isValidExtensionID(_ id: String) -> Bool {
+        id.count == 32 && id.allSatisfy { $0 >= "a" && $0 <= "p" }
+    }
+
     private var cacheDir: URL {
         VMConfig.defaultStorageDirectory.appendingPathComponent("extensions", isDirectory: true)
     }
@@ -16,6 +20,9 @@ public actor ExtensionCache {
     }
 
     public func download(extensionID: String) async throws -> URL {
+        guard Self.isValidExtensionID(extensionID) else {
+            throw ExtensionCacheError.invalidExtensionID
+        }
         let dir = extensionDir(for: extensionID)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
 
@@ -92,7 +99,7 @@ public actor ExtensionCache {
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/usr/bin/unzip")
-        process.arguments = ["-o", "-q", zipFile.path, "manifest.json", "-d", tempDir.path]
+        process.arguments = ["-o", "-j", "-q", zipFile.path, "manifest.json", "-d", tempDir.path]
         try process.run()
         process.waitUntilExit()
 

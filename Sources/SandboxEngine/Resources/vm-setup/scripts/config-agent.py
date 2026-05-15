@@ -766,10 +766,11 @@ def write_dynamic_policy(cfg):
     # When user extensions are configured, use ExtensionSettings policy
     # to force-install them. Chrome handles the download, installation,
     # and DNR rule compilation — no unpacking needed.
-    ext_ids = cfg.get("userExtensionIDs", [])
+    _VALID_EXT_ID = re.compile(r"^[a-p]{32}$")
+    ext_ids = [eid for eid in cfg.get("userExtensionIDs", []) if _VALID_EXT_ID.match(eid)]
     if ext_ids:
         policy["ExtensionsToolbarAccessEnabled"] = True
-        ext_settings = {}
+        ext_settings = {"*": {"installation_mode": "blocked"}}
         for ext_id in ext_ids:
             ext_settings[ext_id] = {
                 "installation_mode": "force_installed",

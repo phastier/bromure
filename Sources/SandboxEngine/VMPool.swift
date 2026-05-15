@@ -585,8 +585,9 @@ public final class VMPool {
         }
         cfg["locale"] = config.locale
 
-        if !config.userExtensionIDs.isEmpty {
-            cfg["userExtensionIDs"] = config.userExtensionIDs
+        let validExtIDs = config.userExtensionIDs.filter { ExtensionCache.isValidExtensionID($0) }
+        if !validExtIDs.isEmpty {
+            cfg["userExtensionIDs"] = validExtIDs
         }
 
         // Display scale: read from UserDefaults so changing 1x/2x doesn't require image rebuild
