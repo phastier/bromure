@@ -250,6 +250,73 @@ def sh_escape(s):
     return "'" + str(s).replace("'", "'\\''") + "'"
 
 
+def download_user_extensions(cfg):
+    """Download and unpack user extensions by ID from Google's CRX endpoint."""
+    ext_ids = cfg.get("userExtensionIDs", [])
+    if not ext_ids:
+        return []
+
+    import io
+    import urllib.request
+    import zipfile
+
+    ext_dir = "/tmp/bromure/user-extensions"
+    os.makedirs(ext_dir, exist_ok=True)
+    paths = []
+
+    # Route through local squid proxy if running (all non-custom-proxy
+    # profiles use squid on 127.0.0.1:3128 for outbound traffic).
+    proxy_handler = urllib.request.ProxyHandler({
+        "http": "http://127.0.0.1:3128",
+        "https": "http://127.0.0.1:3128",
+    })
+    opener = urllib.request.build_opener(proxy_handler)
+
+    for ext_id in ext_ids:
+        if not ext_id:
+            continue
+        dest = os.path.join(ext_dir, ext_id)
+        manifest = os.path.join(dest, "manifest.json")
+        if os.path.isfile(manifest):
+            paths.append(dest)
+            print(f"config-agent: user extension {ext_id} already unpacked")
+            continue
+        try:
+            url = (
+                "https://clients2.google.com/service/update2/crx"
+                f"?response=redirect&prodversion=130.0&acceptformat=crx3"
+                f"&x=id%3D{ext_id}%26uc"
+            )
+            print(f"config-agent: downloading extension {ext_id}...")
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            # Try proxy first, fall back to direct
+            try:
+                with opener.open(req, timeout=30) as resp:
+                    crx_data = resp.read()
+            except Exception:
+                print(f"config-agent: proxy failed, trying direct for {ext_id}...")
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    crx_data = resp.read()
+            # CRX3: magic "Cr24" (4) + version (4) + header_len (4, LE) + header + ZIP
+            if crx_data[:4] == b"Cr24":
+                header_len = int.from_bytes(crx_data[8:12], "little")
+                zip_data = crx_data[12 + header_len:]
+            else:
+                zip_data = crx_data
+            os.makedirs(dest, exist_ok=True)
+            with zipfile.ZipFile(io.BytesIO(zip_data)) as zf:
+                zf.extractall(dest)
+            if os.path.isfile(manifest):
+                paths.append(dest)
+                print(f"config-agent: installed user extension {ext_id}")
+            else:
+                print(f"config-agent: WARNING: no manifest.json in extension {ext_id}")
+        except Exception as e:
+            print(f"config-agent: WARNING: failed to download extension {ext_id}: {e}")
+
+    return paths
+
+
 def write_chrome_env(cfg):
     """Build and write the chrome-env file."""
     env_file = "/tmp/bromure/chrome-env"
@@ -343,10 +410,11 @@ def write_chrome_env(cfg):
         extensions.append("/opt/bromure/extensions/corporate-guard")
     if extensions:
         extra_flags.append(f"--load-extension={','.join(extensions)}")
-        # Only allow our bundled extensions — disable every other extension
-        # Chromium might try to load (policy-pushed, user-installed in a
-        # persistent profile, etc.).
-        extra_flags.append(f"--disable-extensions-except={','.join(extensions)}")
+        # Only restrict extensions when no user extensions are configured.
+        # Policy-installed user extensions need unrestricted loading;
+        # the ExtensionSettings policy controls what gets installed.
+        if not cfg.get("userExtensionIDs"):
+            extra_flags.append(f"--disable-extensions-except={','.join(extensions)}")
 
     profile_dir = cfg.get("profileDir")
     if profile_dir:
@@ -762,6 +830,21 @@ def write_dynamic_policy(cfg):
         policy["AutofillCreditCardEnabled"] = False
         policy["CredentialProviderPromoEnabled"] = False
 
+    # When user extensions are configured, use ExtensionSettings policy
+    # to force-install them. Chrome handles the download, installation,
+    # and DNR rule compilation — no unpacking needed.
+    ext_ids = cfg.get("userExtensionIDs", [])
+    if ext_ids:
+        policy["ExtensionsToolbarAccessEnabled"] = True
+        ext_settings = {}
+        for ext_id in ext_ids:
+            ext_settings[ext_id] = {
+                "installation_mode": "force_installed",
+                "update_url": "https://clients2.google.com/service/update2/crx",
+                "toolbar_pin": "force_pinned",
+            }
+        policy["ExtensionSettings"] = ext_settings
+
     policy_path = "/etc/chromium/policies/managed/session.json"
     os.makedirs(os.path.dirname(policy_path), exist_ok=True)
     with open(policy_path, "w") as f:
@@ -1026,7 +1109,7 @@ def main():
     # branch is correct from first page load.
     write_file_picker_policy(cfg)
 
-    # Write chrome-env
+    # Write chrome-env (user extensions added after network services start)
     write_chrome_env(cfg)
 
     # Write dynamic Chrome policy (media capture, WebRTC)

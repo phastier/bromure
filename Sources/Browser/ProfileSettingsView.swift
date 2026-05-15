@@ -19,6 +19,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
     case hostIsolation = "Host Isolation"
     case network = "Network Isolation"
     case privacy = "Privacy & Safety"
+    case extensions = "Extensions"
     case vpnAds = "VPN & Ads"
     case enterprise = "Enterprise"
     case advanced = "Advanced"
@@ -33,6 +34,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .fileTransfer: "arrow.up.arrow.down"
         case .hostIsolation: "macwindow.on.rectangle"
         case .privacy: "lock.shield.fill"
+        case .extensions: "puzzlepiece.extension.fill"
         case .network: "network"
         case .vpnAds: "shield.fill"
         case .enterprise: "building.2.fill"
@@ -48,6 +50,7 @@ enum SettingsCategory: String, CaseIterable, Identifiable {
         case .fileTransfer: .cyan
         case .hostIsolation: .teal
         case .privacy: .blue
+        case .extensions: .mint
         case .network: .indigo
         case .vpnAds: .green
         case .enterprise: .purple
@@ -117,6 +120,10 @@ struct ProfileSettingsView: View {
     @State private var vtKeyStatus: VTKeyStatus?
     @State private var proxyHostError: String?
     @State private var proxyHostChecking = false
+    @State private var showExtensionURLField = false
+    @State private var extensionURL = ""
+    @State private var extensionImportError: String?
+    @State private var extensionDownloading = false
 
     // IKEv2 keychain-backed secrets (not stored in profile JSON)
     @State private var ikev2Password: String = ""
@@ -282,6 +289,7 @@ struct ProfileSettingsView: View {
         case .fileTransfer: fileTransferView
         case .hostIsolation: hostIsolationView
         case .privacy: privacyView
+        case .extensions: extensionsView
         case .network: networkView
         case .vpnAds: vpnAdsView
         case .enterprise: enterpriseView
@@ -813,6 +821,207 @@ struct ProfileSettingsView: View {
         }
     }
 
+    // MARK: - Extensions
+
+    private var extensionsView: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            sectionHeader("Extensions", subtitle: "Add browser extensions to this profile")
+
+            // Curated extensions
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Recommended").font(.headline)
+                Text("Popular privacy and security extensions. Toggling an extension will download it on first use.")
+                    .settingDescription()
+
+                VStack(spacing: 0) {
+                    ForEach(CuratedExtensions.all) { curated in
+                        let isEnabled = draft.settings.userExtensions.contains { $0.extensionID == curated.extensionID && $0.enabled }
+                        HStack {
+                            Image(systemName: "puzzlepiece.extension.fill")
+                                .foregroundStyle(.secondary)
+                            Text(curated.name)
+                            Spacer()
+                            Toggle("", isOn: Binding(
+                                get: { isEnabled },
+                                set: { on in
+                                    if on {
+                                        if let idx = draft.settings.userExtensions.firstIndex(where: { $0.extensionID == curated.extensionID }) {
+                                            draft.settings.userExtensions[idx].enabled = true
+                                        } else {
+                                            var ext = curated
+                                            ext.enabled = true
+                                            draft.settings.userExtensions.append(ext)
+                                            Task { try? await ExtensionCache.shared.download(extensionID: curated.extensionID) }
+                                        }
+                                    } else {
+                                        if let idx = draft.settings.userExtensions.firstIndex(where: { $0.extensionID == curated.extensionID }) {
+                                            draft.settings.userExtensions[idx].enabled = false
+                                        }
+                                    }
+                                }
+                            ))
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                        }
+                        .padding(.vertical, 6)
+                        .padding(.horizontal, 10)
+                        if curated.id != CuratedExtensions.all.last?.id {
+                            Divider()
+                        }
+                    }
+                }
+                .background(.background.secondary)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+            }
+
+            settingsDivider
+
+            // Custom extensions behind a disclosure group
+            DisclosureGroup("Custom Extensions") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Add third-party extensions by pasting a Chrome Web Store URL. These extensions can access all browsing data within the session.")
+                        .settingDescription()
+
+                    Label {
+                        Text("Custom extensions are not vetted by Bromure. Only install extensions you trust.")
+                            .font(.callout)
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.yellow)
+                    }
+                    .padding(10)
+                    .background(.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 8))
+
+                    let customExtensions = draft.settings.userExtensions.filter { !$0.curated }
+                    if !customExtensions.isEmpty {
+                        VStack(spacing: 0) {
+                            ForEach(customExtensions) { ext in
+                                HStack {
+                                    Image(systemName: "puzzlepiece.extension")
+                                        .foregroundStyle(.secondary)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(ext.name).lineLimit(1)
+                                        Text(ext.extensionID)
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer()
+                                    Toggle("", isOn: Binding(
+                                        get: { ext.enabled },
+                                        set: { on in
+                                            if let idx = draft.settings.userExtensions.firstIndex(where: { $0.id == ext.id }) {
+                                                draft.settings.userExtensions[idx].enabled = on
+                                            }
+                                        }
+                                    ))
+                                    .toggleStyle(.switch)
+                                    .labelsHidden()
+                                    Button(role: .destructive) {
+                                        draft.settings.userExtensions.removeAll { $0.id == ext.id }
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .foregroundStyle(.red)
+                                    }
+                                    .buttonStyle(.borderless)
+                                }
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 10)
+                                if ext.id != customExtensions.last?.id {
+                                    Divider()
+                                }
+                            }
+                        }
+                        .background(.background.secondary)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+
+                    if showExtensionURLField {
+                        HStack {
+                            TextField("Chrome Web Store URL", text: $extensionURL)
+                                .textFieldStyle(.roundedBorder)
+                                .onSubmit { addExtensionFromURL() }
+                            Button("Add") { addExtensionFromURL() }
+                                .disabled(extensionURL.isEmpty || extensionDownloading)
+                            Button("Cancel") {
+                                showExtensionURLField = false
+                                extensionURL = ""
+                                extensionImportError = nil
+                            }
+                        }
+                        if extensionDownloading {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                    }
+
+                    if !showExtensionURLField {
+                        Button {
+                            showExtensionURLField = true
+                        } label: {
+                            Label("Add Extension\u{2026}", systemImage: "plus.circle")
+                        }
+                        .controlSize(.small)
+                    }
+
+                    if let err = extensionImportError {
+                        Text(err)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
+                .padding(.top, 8)
+            }
+        }
+    }
+
+    private func addExtensionFromURL() {
+        extensionImportError = nil
+        guard let extID = Self.parseExtensionID(from: extensionURL) else {
+            extensionImportError = "Invalid Chrome Web Store URL. Expected format: chromewebstore.google.com/detail/.../EXTENSION_ID"
+            return
+        }
+        if draft.settings.userExtensions.contains(where: { $0.extensionID == extID }) {
+            extensionImportError = "This extension is already added."
+            return
+        }
+        extensionDownloading = true
+        Task {
+            do {
+                _ = try await ExtensionCache.shared.download(extensionID: extID)
+                let name = (try? await ExtensionCache.shared.extractName(for: extID)) ?? extID
+                await MainActor.run {
+                    draft.settings.userExtensions.append(
+                        UserExtension(name: name, extensionID: extID, curated: false)
+                    )
+                    extensionURL = ""
+                    showExtensionURLField = false
+                    extensionDownloading = false
+                }
+            } catch {
+                await MainActor.run {
+                    extensionImportError = "Failed to download extension: \(error.localizedDescription)"
+                    extensionDownloading = false
+                }
+            }
+        }
+    }
+
+    static func parseExtensionID(from urlString: String) -> String? {
+        let pattern = #"chromewebstore\.google\.com/detail/[^/]+/([a-p]{32})"#
+        guard let regex = try? NSRegularExpression(pattern: pattern),
+              let match = regex.firstMatch(in: urlString, range: NSRange(urlString.startIndex..., in: urlString)),
+              let range = Range(match.range(at: 1), in: urlString) else {
+            // Also accept a bare 32-char extension ID
+            let bare = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+            if bare.count == 32, bare.allSatisfy({ $0 >= "a" && $0 <= "p" }) {
+                return bare
+            }
+            return nil
+        }
+        return String(urlString[range])
+    }
+
     // MARK: - Network Isolation
 
     private var networkView: some View {
@@ -1327,6 +1536,7 @@ struct ProfileSettingsView: View {
                         .settingDescription()
                 }
             }
+
         }
     }
 

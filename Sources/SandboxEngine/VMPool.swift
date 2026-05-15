@@ -585,6 +585,10 @@ public final class VMPool {
         }
         cfg["locale"] = config.locale
 
+        if !config.userExtensionIDs.isEmpty {
+            cfg["userExtensionIDs"] = config.userExtensionIDs
+        }
+
         // Display scale: read from UserDefaults so changing 1x/2x doesn't require image rebuild
         let displayScale = UserDefaults.standard.object(forKey: "vm.displayScale") as? Int ?? VMConfig.detectDisplayScale()
         cfg["displayScale"] = displayScale
