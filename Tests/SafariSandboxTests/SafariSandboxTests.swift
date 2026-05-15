@@ -1645,6 +1645,7 @@ struct ProfileSettingsUserExtensionsTests {
     @Test("toVMConfig maps only enabled extensions")
     func toVMConfigFiltersDisabled() {
         var settings = ProfileSettings()
+        settings.extensionsEnabled = true
         var ext1 = UserExtension(name: "Enabled", extensionID: "aaaaaaaaaaaaaaapaaaaaaaaaaaaaaap", curated: true)
         ext1.enabled = true
         var ext2 = UserExtension(name: "Disabled", extensionID: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", curated: false)

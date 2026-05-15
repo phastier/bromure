@@ -124,6 +124,7 @@ struct ProfileSettingsView: View {
     @State private var extensionURL = ""
     @State private var extensionImportError: String?
     @State private var extensionDownloading = false
+    @State private var showDisableNativeTabsAlert = false
 
     // IKEv2 keychain-backed secrets (not stored in profile JSON)
     @State private var ikev2Password: String = ""
@@ -608,6 +609,12 @@ struct ProfileSettingsView: View {
                 description: "Hide Chromium\u{2019}s tab strip and address bar, and render them as native macOS toolbar items instead. Tabs, favicons, the URL bar, and a share button appear in the window\u{2019}s titlebar \u{2014} so the page uses the full window and the browser feels like a native Mac app.",
                 isOn: $draft.settings.nativeChrome
             )
+            .disabled(draft.settings.extensionsEnabled)
+            if draft.settings.extensionsEnabled {
+                Text("Native Tabs is disabled because extensions are enabled. Disable extensions first to re-enable Native Tabs.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
 
             settingsDivider
 
@@ -827,57 +834,92 @@ struct ProfileSettingsView: View {
         VStack(alignment: .leading, spacing: 20) {
             sectionHeader("Extensions", subtitle: "Add browser extensions to this profile")
 
-            // Curated extensions
-            VStack(alignment: .leading, spacing: 10) {
-                Text("Recommended").font(.headline)
-                Text("Popular privacy and security extensions. Toggling an extension will download it on first use.")
-                    .settingDescription()
-
-                VStack(spacing: 0) {
-                    ForEach(CuratedExtensions.all) { curated in
-                        let isEnabled = draft.settings.userExtensions.contains { $0.extensionID == curated.extensionID && $0.enabled }
-                        HStack {
-                            Image(systemName: "puzzlepiece.extension.fill")
-                                .foregroundStyle(.secondary)
-                            Text(curated.name)
-                            Spacer()
-                            Toggle("", isOn: Binding(
-                                get: { isEnabled },
-                                set: { on in
-                                    if on {
-                                        if let idx = draft.settings.userExtensions.firstIndex(where: { $0.extensionID == curated.extensionID }) {
-                                            draft.settings.userExtensions[idx].enabled = true
-                                        } else {
-                                            var ext = curated
-                                            ext.enabled = true
-                                            draft.settings.userExtensions.append(ext)
-                                            Task { try? await ExtensionCache.shared.download(extensionID: curated.extensionID) }
-                                        }
-                                    } else {
-                                        if let idx = draft.settings.userExtensions.firstIndex(where: { $0.extensionID == curated.extensionID }) {
-                                            draft.settings.userExtensions[idx].enabled = false
-                                        }
-                                    }
+            // Enable Extensions master toggle
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle(
+                    "Enable Extensions",
+                    isOn: Binding(
+                        get: { draft.settings.extensionsEnabled },
+                        set: { on in
+                            if on {
+                                if draft.settings.nativeChrome {
+                                    showDisableNativeTabsAlert = true
+                                } else {
+                                    draft.settings.extensionsEnabled = true
                                 }
-                            ))
-                            .toggleStyle(.switch)
-                            .labelsHidden()
+                            } else {
+                                draft.settings.extensionsEnabled = false
+                            }
                         }
-                        .padding(.vertical, 6)
-                        .padding(.horizontal, 10)
-                        if curated.id != CuratedExtensions.all.last?.id {
-                            Divider()
-                        }
-                    }
+                    )
+                )
+                Text("Extensions require Chrome's built-in toolbar. Enabling extensions will disable Native Tabs for this profile.")
+                    .settingDescription()
+            }
+            .alert("Disable Native Tabs?", isPresented: $showDisableNativeTabsAlert) {
+                Button("Disable Native Tabs") {
+                    draft.settings.nativeChrome = false
+                    draft.settings.extensionsEnabled = true
                 }
-                .background(.background.secondary)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("Extensions require Chrome's native toolbar to display icons and popups. Native Tabs will be turned off for this profile.")
             }
 
-            settingsDivider
+            if draft.settings.extensionsEnabled {
+                settingsDivider
 
-            // Custom extensions behind a disclosure group
-            DisclosureGroup("Custom Extensions") {
+                // Curated extensions
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Recommended").font(.headline)
+                    Text("Popular privacy and security extensions. Toggling an extension will download it on first use.")
+                        .settingDescription()
+
+                    VStack(spacing: 0) {
+                        ForEach(CuratedExtensions.all) { curated in
+                            let isEnabled = draft.settings.userExtensions.contains { $0.extensionID == curated.extensionID && $0.enabled }
+                            HStack {
+                                Image(systemName: "puzzlepiece.extension.fill")
+                                    .foregroundStyle(.secondary)
+                                Text(curated.name)
+                                Spacer()
+                                Toggle("", isOn: Binding(
+                                    get: { isEnabled },
+                                    set: { on in
+                                        if on {
+                                            if let idx = draft.settings.userExtensions.firstIndex(where: { $0.extensionID == curated.extensionID }) {
+                                                draft.settings.userExtensions[idx].enabled = true
+                                            } else {
+                                                var ext = curated
+                                                ext.enabled = true
+                                                draft.settings.userExtensions.append(ext)
+                                                Task { try? await ExtensionCache.shared.download(extensionID: curated.extensionID) }
+                                            }
+                                        } else {
+                                            if let idx = draft.settings.userExtensions.firstIndex(where: { $0.extensionID == curated.extensionID }) {
+                                                draft.settings.userExtensions[idx].enabled = false
+                                            }
+                                        }
+                                    }
+                                ))
+                                .toggleStyle(.switch)
+                                .labelsHidden()
+                            }
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 10)
+                            if curated.id != CuratedExtensions.all.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                    .background(.background.secondary)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                }
+
+                settingsDivider
+
+                // Custom extensions behind a disclosure group
+                DisclosureGroup("Custom Extensions") {
                 VStack(alignment: .leading, spacing: 10) {
                     Text("Add third-party extensions by pasting a Chrome Web Store URL. These extensions can access all browsing data within the session.")
                         .settingDescription()
@@ -972,6 +1014,7 @@ struct ProfileSettingsView: View {
                 }
                 .padding(.top, 8)
             }
+            } // end if extensionsEnabled
         }
     }
 
