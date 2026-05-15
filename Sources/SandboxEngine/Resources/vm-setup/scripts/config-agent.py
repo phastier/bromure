@@ -13,6 +13,7 @@ This replaces serial-based config delivery for lower latency.
 
 import json
 import os
+import re
 import socket
 import struct
 import subprocess
