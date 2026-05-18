@@ -229,3 +229,30 @@
 "Inspect those folders before launching anything that re-uses them." = "Inspect those folders before launching anything that re-uses them.";
 "Wipe and Launch" = "Wipe and Launch";
 "Compromised — launching will prompt to wipe disk and home" = "Compromised — launching will prompt to wipe disk and home";
+
+/* Editor — MCP */
+"MCP" = "MCP";
+"MCP servers give your agent access to external tools and context. Configs are translated into the right format for the active agent (Claude Code or Codex) and injected into the VM at boot." = "MCP servers give your agent access to external tools and context. Configs are translated into the right format for the active agent (Claude Code or Codex) and injected into the VM at boot.";
+"No MCP servers configured." = "No MCP servers configured.";
+"Add server" = "Add server";
+"Enabled" = "Enabled";
+"Disabled" = "Disabled";
+"Switch to form" = "Switch to form";
+"Edit as JSON" = "Edit as JSON";
+"Remove this server" = "Remove this server";
+"Command" = "Command";
+"Arguments" = "Arguments";
+"URL" = "URL";
+"Authentication" = "Authentication";
+"Authorized" = "Authorized";
+"expires %@" = "expires %@";
+"Re-authorize" = "Re-authorize";
+"Authorize with OAuth…" = "Authorize with OAuth…";
+"Authorizing…" = "Authorizing…";
+"Or enter a static token:" = "Or enter a static token:";
+"Env var name" = "Env var name";
+"Token" = "Token";
+"Managed by OAuth" = "Managed by OAuth";
+"Never sent to VM — swapped by proxy" = "Never sent to VM — swapped by proxy";
+"Raw JSON config — passed directly to the agent's MCP config file." = "Raw JSON config — passed directly to the agent's MCP config file.";
+"Invalid JSON" = "Invalid JSON";

@@ -228,3 +228,30 @@
 "Inspect those folders before launching anything that re-uses them." = "Inspeccione esas carpetas antes de iniciar cualquier cosa que las reutilice.";
 "Wipe and Launch" = "Borrar e iniciar";
 "Compromised — launching will prompt to wipe disk and home" = "Comprometido — al iniciar se le pedirá borrar el disco y el directorio personal";
+
+/* Editor — MCP */
+"MCP" = "MCP";
+"MCP servers give your agent access to external tools and context. Configs are translated into the right format for the active agent (Claude Code or Codex) and injected into the VM at boot." = "Los servidores MCP dan a tu agente acceso a herramientas y contexto externos. Las configuraciones se traducen al formato adecuado para el agente activo (Claude Code o Codex) y se inyectan en la VM al arranque.";
+"No MCP servers configured." = "No hay servidores MCP configurados.";
+"Add server" = "Añadir servidor";
+"Enabled" = "Activado";
+"Disabled" = "Desactivado";
+"Switch to form" = "Cambiar a formulario";
+"Edit as JSON" = "Editar como JSON";
+"Remove this server" = "Eliminar este servidor";
+"Command" = "Comando";
+"Arguments" = "Argumentos";
+"URL" = "URL";
+"Authentication" = "Autenticación";
+"Authorized" = "Autorizado";
+"expires %@" = "caduca %@";
+"Re-authorize" = "Volver a autorizar";
+"Authorize with OAuth…" = "Autorizar con OAuth…";
+"Authorizing…" = "Autorizando…";
+"Or enter a static token:" = "O introduce un token estático:";
+"Env var name" = "Nombre de variable de entorno";
+"Token" = "Token";
+"Managed by OAuth" = "Gestionado por OAuth";
+"Never sent to VM — swapped by proxy" = "Nunca se envía a la VM — sustituido por el proxy";
+"Raw JSON config — passed directly to the agent's MCP config file." = "Configuración JSON sin procesar — se pasa directamente al archivo de configuración MCP del agente.";
+"Invalid JSON" = "JSON no válido";

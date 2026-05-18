@@ -228,3 +228,30 @@
 "Inspect those folders before launching anything that re-uses them." = "在啟動任何會重複使用這些資料夾的程式之前,請先加以檢查。";
 "Wipe and Launch" = "清除並啟動";
 "Compromised — launching will prompt to wipe disk and home" = "已入侵 — 啟動時會提示清除磁碟與家目錄";
+
+/* Editor — MCP */
+"MCP" = "MCP";
+"MCP servers give your agent access to external tools and context. Configs are translated into the right format for the active agent (Claude Code or Codex) and injected into the VM at boot." = "MCP 伺服器讓您的代理可存取外部工具與情境。設定會轉換為目前代理（Claude Code 或 Codex）所需的格式，並於開機時注入到虛擬機中。";
+"No MCP servers configured." = "尚未設定 MCP 伺服器。";
+"Add server" = "加入伺服器";
+"Enabled" = "已啟用";
+"Disabled" = "已停用";
+"Switch to form" = "切換為表單";
+"Edit as JSON" = "以 JSON 編輯";
+"Remove this server" = "移除此伺服器";
+"Command" = "指令";
+"Arguments" = "參數";
+"URL" = "URL";
+"Authentication" = "驗證";
+"Authorized" = "已授權";
+"expires %@" = "%@ 到期";
+"Re-authorize" = "重新授權";
+"Authorize with OAuth…" = "使用 OAuth 授權…";
+"Authorizing…" = "授權中…";
+"Or enter a static token:" = "或輸入靜態權杖：";
+"Env var name" = "環境變數名稱";
+"Token" = "權杖";
+"Managed by OAuth" = "由 OAuth 管理";
+"Never sent to VM — swapped by proxy" = "永遠不會傳送至虛擬機 — 由代理替換";
+"Raw JSON config — passed directly to the agent's MCP config file." = "原始 JSON 設定 — 直接傳遞到代理的 MCP 設定檔。";
+"Invalid JSON" = "JSON 無效";

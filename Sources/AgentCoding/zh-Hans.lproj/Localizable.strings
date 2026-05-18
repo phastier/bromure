@@ -228,3 +228,30 @@
 "Inspect those folders before launching anything that re-uses them." = "在启动任何重用这些文件夹的程序之前,请先检查它们。";
 "Wipe and Launch" = "清除并启动";
 "Compromised — launching will prompt to wipe disk and home" = "已入侵 — 启动时会提示清除磁盘和主目录";
+
+/* Editor — MCP */
+"MCP" = "MCP";
+"MCP servers give your agent access to external tools and context. Configs are translated into the right format for the active agent (Claude Code or Codex) and injected into the VM at boot." = "MCP 服务器为您的智能体提供外部工具和上下文访问能力。配置会被翻译为当前智能体（Claude Code 或 Codex）所需的格式，并在启动时注入到虚拟机中。";
+"No MCP servers configured." = "未配置 MCP 服务器。";
+"Add server" = "添加服务器";
+"Enabled" = "已启用";
+"Disabled" = "已禁用";
+"Switch to form" = "切换到表单";
+"Edit as JSON" = "以 JSON 编辑";
+"Remove this server" = "移除此服务器";
+"Command" = "命令";
+"Arguments" = "参数";
+"URL" = "URL";
+"Authentication" = "身份验证";
+"Authorized" = "已授权";
+"expires %@" = "%@ 过期";
+"Re-authorize" = "重新授权";
+"Authorize with OAuth…" = "使用 OAuth 授权…";
+"Authorizing…" = "授权中…";
+"Or enter a static token:" = "或输入静态令牌：";
+"Env var name" = "环境变量名";
+"Token" = "令牌";
+"Managed by OAuth" = "由 OAuth 管理";
+"Never sent to VM — swapped by proxy" = "永不发送至虚拟机 — 由代理替换";
+"Raw JSON config — passed directly to the agent's MCP config file." = "原始 JSON 配置 — 直接传递到智能体的 MCP 配置文件。";
+"Invalid JSON" = "JSON 无效";

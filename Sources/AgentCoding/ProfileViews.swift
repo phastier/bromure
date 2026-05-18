@@ -454,7 +454,7 @@ struct ProfileEditorView: View {
                 // Sidebar
                 List(EditorCategory.allCases, selection: $selectedCategory) { category in
                     Label {
-                        Text(category.rawValue)
+                        Text(LocalizedStringKey(category.rawValue))
                     } icon: {
                         categoryIcon(category)
                             .frame(width: 22, height: 22)
@@ -2276,7 +2276,7 @@ private struct MCPServerRow: View {
                 Toggle("", isOn: $server.enabled)
                     .toggleStyle(.switch)
                     .labelsHidden()
-                    .help(server.enabled ? "Enabled" : "Disabled")
+                    .help(LocalizedStringKey(server.enabled ? "Enabled" : "Disabled"))
                 Spacer()
                 Button {
                     if !showJSON && server.rawJSON.isEmpty {
@@ -2290,7 +2290,7 @@ private struct MCPServerRow: View {
                         .font(.system(size: 11))
                 }
                 .buttonStyle(.borderless)
-                .help(showJSON ? "Switch to form" : "Edit as JSON")
+                .help(LocalizedStringKey(showJSON ? "Switch to form" : "Edit as JSON"))
                 Button(action: onRemove) {
                     Image(systemName: "minus.circle")
                 }
@@ -2355,7 +2355,7 @@ private struct MCPServerRow: View {
                                 .font(.caption)
                                 .foregroundStyle(.red)
                             } else {
-                                Button(isAuthorizing ? "Authorizing\u{2026}" : "Authorize with OAuth\u{2026}") {
+                                Button(LocalizedStringKey(isAuthorizing ? "Authorizing\u{2026}" : "Authorize with OAuth\u{2026}")) {
                                     authorizeOAuth()
                                 }
                                 .font(.caption)
