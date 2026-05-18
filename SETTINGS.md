@@ -132,6 +132,9 @@ Manage browser extensions for this profile.
 | Setting | Description |
 |---|---|
 | **Enable Extensions** | Enables Chrome extensions for this profile. Extensions require Chrome's built-in toolbar, so enabling this automatically disables Native Tabs. When enabled, a list of recommended privacy and security extensions appears along with a Custom Extensions section for installing any extension by ID. |
+| **uBlock Origin Lite** | A content blocker that removes ads, trackers, and annoyances from websites. Listed under Recommended. Downloaded automatically on first use when toggled on. |
+| **Privacy Badger** | An EFF extension that automatically learns to block invisible trackers as you browse. Listed under Recommended. Downloaded automatically on first use when toggled on. |
+| **Custom Extensions** | Install any Chrome extension by pasting a Chrome Web Store URL. Custom extensions are not vetted by Bromure and have full access to all browsing data within the session. |
 
 ### VPN & Ads
 
