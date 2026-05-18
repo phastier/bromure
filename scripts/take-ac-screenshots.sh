@@ -17,7 +17,7 @@ APP_NAME="Bromure Agentic Coding"
 APP_BUNDLE="$(pwd)/.build/arm64-apple-macosx/release/${APP_NAME}.app"
 BIN="${APP_BUNDLE}/Contents/MacOS/bromure-ac"
 OUTPUT_DIR="$(pwd)/Resources/ac"
-PROFILE="Screenshot"
+PROFILE="Claude Dev"
 
 mkdir -p "$OUTPUT_DIR"
 
@@ -49,18 +49,36 @@ LOCALES=(
 # ----------------------------------------------------------------------
 
 ac_tell() {
-    osascript -e "tell application \"${APP_NAME}\" to $1" 2>/dev/null
+    osascript -e "tell application \"${APP_NAME}\" to $1" 2>&1
+}
+
+# True only when the response is real data — not osascript stderr noise
+# and not one of the bridge's "error: …" sentinel strings. Used to drive
+# the wait loop so we don't proceed before NSApp.delegate is the
+# ACAppDelegate.
+ac_response_ok() {
+    local s="$1"
+    [ -n "$s" ] && [[ "$s" != error* ]] && [[ "$s" != *"execution error"* ]]
 }
 
 ensure_profile() {
-    # Create the screenshot profile if it doesn't already exist. The
-    # `create ac profile` command is idempotent in spirit — duplicates
-    # of the same name are tolerated by the script (we look up by name).
-    local id
-    id=$(ac_tell "create ac profile \"$PROFILE\"" || true)
-    if [ -z "$id" ] || [[ "$id" == error* ]]; then
-        echo "  (using existing $PROFILE profile)"
+    # Check the live profile list first; only create if missing. The
+    # `create ac profile` bridge does NOT dedupe by name, so calling it
+    # blindly per locale would accumulate duplicate "Screenshot"
+    # profiles in the on-disk store.
+    local listing
+    listing=$(ac_tell "list profiles")
+    if echo "$listing" | grep -q "\"name\":\"$PROFILE\""; then
+        echo "  (reusing existing $PROFILE profile)"
+        return
     fi
+    local id
+    id=$(ac_tell "create ac profile \"$PROFILE\"")
+    if ! ac_response_ok "$id"; then
+        echo "  ERROR creating profile: $id" >&2
+        return 1
+    fi
+    echo "  (created $PROFILE profile: $id)"
 }
 
 editor_window_id() {
@@ -94,18 +112,35 @@ for entry in "${LOCALES[@]}"; do
 
     "$BIN" -AppleLanguages "($locale)" >/dev/null 2>&1 &
 
-    # Wait for the app to register its scripting interface.
-    for _ in $(seq 1 30); do
+    # Wait for the app to register its scripting interface AND for
+    # NSApp.delegate to be the ACAppDelegate. Before that, every bridge
+    # command returns "error: app not ready" — non-empty, so a naive
+    # `-n "$state"` check would race past the readiness gate.
+    ready=false
+    for _ in $(seq 1 60); do
         sleep 0.5
-        state=$(ac_tell "get app state" 2>/dev/null || true)
-        [ -n "$state" ] && break
+        state=$(ac_tell "get app state")
+        if ac_response_ok "$state"; then
+            ready=true
+            break
+        fi
     done
+    if ! $ready; then
+        echo "  ERROR: app not ready after 30s — last state: $state" >&2
+        continue
+    fi
     sleep 0.5
 
-    ensure_profile
+    ensure_profile || continue
 
-    # Open editor for the screenshot profile.
-    ac_tell "open ac profile editor \"$PROFILE\"" >/dev/null
+    # Open editor for the screenshot profile. Surface failures —
+    # if the bridge can't find the profile we want the operator to see
+    # it, not skip the locale with an empty Resources/ac/ directory.
+    open_result=$(ac_tell "open ac profile editor \"$PROFILE\"")
+    if ! ac_response_ok "$open_result"; then
+        echo "  ERROR opening editor: $open_result" >&2
+        continue
+    fi
     sleep 1
 
     wid=$(editor_window_id)
@@ -115,7 +150,11 @@ for entry in "${LOCALES[@]}"; do
     fi
 
     for category in "${CATEGORIES[@]}"; do
-        ac_tell "select editor category \"$category\"" >/dev/null
+        sel=$(ac_tell "select editor category \"$category\"")
+        if ! ac_response_ok "$sel"; then
+            echo "  $category SKIP (select failed: $sel)" >&2
+            continue
+        fi
         sleep 0.6
         outfile="$OUTPUT_DIR/editor_${category}_${suffix}.png"
         if capture_window_id "$outfile" "$wid"; then
