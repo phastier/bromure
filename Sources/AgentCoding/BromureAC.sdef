@@ -57,7 +57,7 @@
             <cocoa class="BromureACCloseProfileEditorCommand"/>
         </command>
 
-        <command name="select editor category" code="BrAcSlCt" description="Switch the editor sidebar to the given category. Names: general, agent, folders, credentials, tracing, appearance, resources.">
+        <command name="select editor category" code="BrAcSlCt" description="Switch the editor sidebar to the given category. Names: general, agent, folders, credentials, environment, mcp, tracing, appearance, resources.">
             <cocoa class="BromureACSelectEditorCategoryCommand"/>
             <direct-parameter type="text" description="Category key"/>
         </command>

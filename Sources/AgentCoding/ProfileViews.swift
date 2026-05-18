@@ -507,8 +507,12 @@ struct ProfileEditorView: View {
         }
         .onReceive(NotificationCenter.default.publisher(
             for: .bromureACSelectEditorCategory)) { note in
-            if let raw = note.object as? String,
-               let cat = EditorCategory(rawValue: raw) {
+            // ScriptCommands lower-cases the category name before
+            // posting; EditorCategory rawValues are title-cased
+            // (e.g. "General", "MCP"). Match case-insensitively so
+            // the AppleScript bridge picks the right tab.
+            if let raw = (note.object as? String)?.lowercased(),
+               let cat = EditorCategory.allCases.first(where: { $0.rawValue.lowercased() == raw }) {
                 selectedCategory = cat
             }
         }
