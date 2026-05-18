@@ -73,8 +73,9 @@ struct ProfilePickerView: View {
             // styling.
             HStack(spacing: 10) {
                 if let icon = NSApp.applicationIconImage {
-                    Image(nsImage: icon)
+                    Image(nsImage: { $0.size = NSSize(width: 40, height: 40); return $0 }(icon))
                         .resizable()
+                        .interpolation(.high)
                         .frame(width: 40, height: 40)
                 }
                 VStack(alignment: .leading, spacing: 1) {
@@ -287,6 +288,7 @@ enum EditorCategory: String, CaseIterable, Identifiable {
     case folders     = "Folders"
     case credentials = "Credentials"
     case environment = "Environment"
+    case mcp         = "MCP"
     case tracing     = "Tracing"
     case appearance  = "Appearance"
     case resources   = "Resources"
@@ -300,6 +302,7 @@ enum EditorCategory: String, CaseIterable, Identifiable {
         case .folders:     "folder.fill"
         case .credentials: "key.fill"
         case .environment: "terminal.fill"
+        case .mcp:         "network"
         case .tracing:     "doc.text.magnifyingglass"
         case .appearance:  "paintpalette.fill"
         case .resources:   "memorychip.fill"
@@ -313,6 +316,7 @@ enum EditorCategory: String, CaseIterable, Identifiable {
         case .folders:     .orange
         case .credentials: .green
         case .environment: .teal
+        case .mcp:         .blue
         case .tracing:     .red
         case .appearance:  .pink
         case .resources:   .gray
@@ -452,9 +456,7 @@ struct ProfileEditorView: View {
                     Label {
                         Text(category.rawValue)
                     } icon: {
-                        Image(systemName: category.symbol)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white)
+                        categoryIcon(category)
                             .frame(width: 22, height: 22)
                             .background(category.color.gradient,
                                         in: RoundedRectangle(cornerRadius: 5))
@@ -520,9 +522,29 @@ struct ProfileEditorView: View {
         case .folders:     foldersSection
         case .credentials: credentialsSection
         case .environment: environmentSection
+        case .mcp:         mcpSection
         case .tracing:     tracingSection
         case .appearance:  appearanceSection
         case .resources:   resourcesSection
+        }
+    }
+
+    @ViewBuilder
+    private func categoryIcon(_ category: EditorCategory) -> some View {
+        if category == .mcp, let url = Bundle.module.url(forResource: "mcp", withExtension: "svg", subdirectory: "icons"),
+           let data = try? Data(contentsOf: url),
+           let svgImage = NSImage(data: data) {
+            Image(nsImage: svgImage)
+                .renderingMode(.template)
+                .resizable()
+                .interpolation(.high)
+                .scaledToFit()
+                .frame(width: 16, height: 16)
+                .foregroundStyle(.white)
+        } else {
+            Image(systemName: category.symbol)
+                .font(.system(size: 12))
+                .foregroundStyle(.white)
         }
     }
 
@@ -1941,6 +1963,40 @@ struct ProfileEditorView: View {
         }
     }
 
+    // MARK: - MCP servers
+
+    private var mcpSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("MCP servers give your agent access to external tools and context. Configs are translated into the right format for the active agent (Claude Code or Codex) and injected into the VM at boot.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if draft.mcpServers.isEmpty {
+                Text("No MCP servers configured.")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 12)
+            } else {
+                ForEach(Array(draft.mcpServers.enumerated()), id: \.element.id) { (idx, _) in
+                    MCPServerRow(
+                        server: $draft.mcpServers[idx],
+                        onRemove: { draft.mcpServers.remove(at: idx) }
+                    )
+                }
+            }
+            HStack {
+                Spacer()
+                Button {
+                    draft.mcpServers.append(MCPServer())
+                } label: {
+                    Label("Add server", systemImage: "plus")
+                }
+                .buttonStyle(.borderless)
+            }
+        }
+    }
+
     @ViewBuilder
     private var appearanceSection: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -2190,6 +2246,259 @@ private struct EnvironmentVariableRow: View {
         .padding(8)
         .background(Color(nsColor: .textBackgroundColor),
                     in: RoundedRectangle(cornerRadius: 6))
+    }
+}
+
+// MARK: - MCP server row
+
+private struct MCPServerRow: View {
+    @Binding var server: MCPServer
+    var onRemove: () -> Void
+    @State private var showJSON = false
+    @State private var isAuthorizing = false
+    @State private var authError: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                TextField("Name", text: $server.name, prompt: Text("my-server"))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 180)
+                if !showJSON {
+                    Picker("", selection: $server.transport) {
+                        ForEach(MCPServer.Transport.allCases, id: \.self) { t in
+                            Text(t.rawValue.uppercased()).tag(t)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(width: 120)
+                }
+                Toggle("", isOn: $server.enabled)
+                    .toggleStyle(.switch)
+                    .labelsHidden()
+                    .help(server.enabled ? "Enabled" : "Disabled")
+                Spacer()
+                Button {
+                    if !showJSON && server.rawJSON.isEmpty {
+                        server.rawJSON = generateJSON()
+                    } else if showJSON {
+                        server.rawJSON = ""
+                    }
+                    showJSON.toggle()
+                } label: {
+                    Image(systemName: showJSON ? "slider.horizontal.3" : "curlybraces")
+                        .font(.system(size: 11))
+                }
+                .buttonStyle(.borderless)
+                .help(showJSON ? "Switch to form" : "Edit as JSON")
+                Button(action: onRemove) {
+                    Image(systemName: "minus.circle")
+                }
+                .buttonStyle(.borderless)
+                .help("Remove this server")
+            }
+            if showJSON {
+                jsonEditor
+            } else {
+                formFields
+            }
+        }
+        .padding(8)
+        .background(Color(nsColor: .textBackgroundColor),
+                    in: RoundedRectangle(cornerRadius: 6))
+        .opacity(server.enabled ? 1.0 : 0.6)
+        .onAppear {
+            if !server.rawJSON.isEmpty { showJSON = true }
+        }
+    }
+
+    @ViewBuilder
+    private var formFields: some View {
+        switch server.transport {
+        case .stdio:
+            HStack(spacing: 6) {
+                TextField("Command", text: $server.command, prompt: Text("npx"))
+                    .textFieldStyle(.roundedBorder)
+                    .frame(maxWidth: 140)
+                TextField("Arguments", text: Binding(
+                    get: { server.arguments.joined(separator: " ") },
+                    set: { server.arguments = $0.components(separatedBy: " ").filter { !$0.isEmpty } }
+                ), prompt: Text("-y @upstash/context7-mcp"))
+                    .textFieldStyle(.roundedBorder)
+            }
+        case .http:
+            TextField("URL", text: $server.url, prompt: Text("https://mcp.example.com/mcp"))
+                .textFieldStyle(.roundedBorder)
+            DisclosureGroup("Authentication") {
+                VStack(alignment: .leading, spacing: 6) {
+                    // OAuth section
+                    if !server.url.isEmpty {
+                        HStack(spacing: 8) {
+                            if server.oauthState != nil {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(.green)
+                                Text("Authorized")
+                                    .font(.caption)
+                                if let exp = server.oauthState?.expiresAt {
+                                    Text("expires \(exp, style: .relative)")
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("Re-authorize") { authorizeOAuth() }
+                                    .font(.caption)
+                                    .disabled(isAuthorizing)
+                                Button("Revoke") {
+                                    server.oauthState = nil
+                                    server.bearerToken = ""
+                                }
+                                .font(.caption)
+                                .foregroundStyle(.red)
+                            } else {
+                                Button(isAuthorizing ? "Authorizing\u{2026}" : "Authorize with OAuth\u{2026}") {
+                                    authorizeOAuth()
+                                }
+                                .font(.caption)
+                                .disabled(isAuthorizing)
+                                if let err = authError {
+                                    Image(systemName: "exclamationmark.triangle.fill")
+                                        .foregroundStyle(.orange)
+                                    Text(err)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(2)
+                                }
+                            }
+                        }
+                        Divider()
+                        Text("Or enter a static token:")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
+                    // Manual token fields
+                    HStack(spacing: 6) {
+                        Text("Env var name")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 80, alignment: .trailing)
+                        TextField("", text: $server.bearerTokenEnvVar,
+                                  prompt: Text("e.g. FIGMA_OAUTH_TOKEN"))
+                            .textFieldStyle(.roundedBorder)
+                            .disabled(server.oauthState != nil)
+                    }
+                    if !server.bearerTokenEnvVar.isEmpty {
+                        HStack(spacing: 6) {
+                            Text("Token")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 80, alignment: .trailing)
+                            if server.oauthState != nil {
+                                Text("Managed by OAuth")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            } else {
+                                SecureField("", text: $server.bearerToken,
+                                            prompt: Text("Never sent to VM — swapped by proxy"))
+                                    .textFieldStyle(.roundedBorder)
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 2)
+            }
+            .font(.caption)
+        }
+    }
+
+    private func authorizeOAuth() {
+        guard !isAuthorizing else { return }
+        isAuthorizing = true
+        authError = nil
+        Task { @MainActor in
+            defer { isAuthorizing = false }
+            do {
+                let broker = MCPOAuthBroker()
+                let result = try await broker.authorizeServer(url: server.url, existingState: server.oauthState)
+                server.oauthState = MCPOAuthState(
+                    clientID: result.clientID,
+                    clientSecret: result.clientSecret,
+                    authorizationEndpoint: result.authorizationEndpoint,
+                    tokenEndpoint: result.tokenEndpoint,
+                    registrationEndpoint: result.registrationEndpoint,
+                    accessToken: result.accessToken,
+                    refreshToken: result.refreshToken,
+                    expiresAt: result.expiresIn.map {
+                        Date().addingTimeInterval(TimeInterval($0))
+                    },
+                    callbackPort: result.callbackPort
+                )
+                server.bearerToken = result.accessToken
+                if server.bearerTokenEnvVar.isEmpty {
+                    let sanitized = server.name
+                        .uppercased()
+                        .replacingOccurrences(of: " ", with: "_")
+                        .replacingOccurrences(of: "-", with: "_")
+                    server.bearerTokenEnvVar = "MCP_OAUTH_\(sanitized)"
+                }
+            } catch MCPOAuthBroker.BrokerError.authorizationCancelled {
+                // User cancelled — no error to show.
+            } catch {
+                authError = error.localizedDescription
+            }
+        }
+    }
+
+    private var jsonEditor: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("Raw JSON config — passed directly to the agent's MCP config file.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            TextEditor(text: $server.rawJSON)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(minHeight: 80, maxHeight: 160)
+                .scrollContentBackground(.hidden)
+                .padding(4)
+                .background(Color(nsColor: .controlBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 4)
+                        .stroke(jsonValid ? Color.clear : Color.red.opacity(0.5))
+                )
+            if !jsonValid {
+                Text("Invalid JSON")
+                    .font(.caption2)
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private var jsonValid: Bool {
+        guard !server.rawJSON.isEmpty,
+              let data = server.rawJSON.data(using: .utf8) else { return true }
+        return (try? JSONSerialization.jsonObject(with: data)) != nil
+    }
+
+    private func generateJSON() -> String {
+        var obj: [String: Any] = [:]
+        switch server.transport {
+        case .stdio:
+            obj["command"] = server.command
+            if !server.arguments.isEmpty { obj["args"] = server.arguments }
+        case .http:
+            obj["type"] = "http"
+            obj["url"] = server.url
+            if !server.bearerTokenEnvVar.isEmpty {
+                obj["bearerTokenEnvVar"] = server.bearerTokenEnvVar
+            }
+        }
+        let env = server.environment.filter(\.isUsable)
+        if !env.isEmpty {
+            obj["env"] = env.reduce(into: [String: String]()) { $0[$1.name] = $1.value }
+        }
+        guard let data = try? JSONSerialization.data(
+            withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]
+        ), let str = String(data: data, encoding: .utf8) else { return "{}" }
+        return str
     }
 }
 
