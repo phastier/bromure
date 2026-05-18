@@ -1021,11 +1021,15 @@ struct ProfileSettingsView: View {
     private func addExtensionFromURL() {
         extensionImportError = nil
         guard let extID = Self.parseExtensionID(from: extensionURL) else {
-            extensionImportError = "Invalid Chrome Web Store URL. Expected format: chromewebstore.google.com/detail/.../EXTENSION_ID"
+            extensionImportError = NSLocalizedString(
+                "Invalid Chrome Web Store URL. Expected format: chromewebstore.google.com/detail/.../EXTENSION_ID",
+                comment: "Error when the URL pasted into the Add Extension field doesn't match the expected Chrome Web Store URL pattern.")
             return
         }
         if draft.settings.userExtensions.contains(where: { $0.extensionID == extID }) {
-            extensionImportError = "This extension is already added."
+            extensionImportError = NSLocalizedString(
+                "This extension is already added.",
+                comment: "Error when the user tries to add an extension that's already in their list.")
             return
         }
         extensionDownloading = true
@@ -1043,7 +1047,11 @@ struct ProfileSettingsView: View {
                 }
             } catch {
                 await MainActor.run {
-                    extensionImportError = "Failed to download extension: \(error.localizedDescription)"
+                    extensionImportError = String(
+                        format: NSLocalizedString(
+                            "Failed to download extension: %@",
+                            comment: "Error when fetching the .crx for an extension from clients2.google.com fails; %@ is the underlying error message."),
+                        error.localizedDescription)
                     extensionDownloading = false
                 }
             }
