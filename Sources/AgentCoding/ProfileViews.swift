@@ -292,6 +292,10 @@ enum EditorCategory: String, CaseIterable, Identifiable {
     case tracing     = "Tracing"
     case appearance  = "Appearance"
     case resources   = "Resources"
+    /// App-wide automation toggles. Only shown when the editor is opened
+    /// from "Bromure → Preferences" (i.e., `storageContext == nil`); the
+    /// settings here are not per-profile.
+    case automation  = "Automation"
 
     var id: String { rawValue }
 
@@ -306,6 +310,7 @@ enum EditorCategory: String, CaseIterable, Identifiable {
         case .tracing:     "doc.text.magnifyingglass"
         case .appearance:  "paintpalette.fill"
         case .resources:   "memorychip.fill"
+        case .automation:  "antenna.radiowaves.left.and.right"
         }
     }
 
@@ -320,6 +325,7 @@ enum EditorCategory: String, CaseIterable, Identifiable {
         case .tracing:     .red
         case .appearance:  .pink
         case .resources:   .gray
+        case .automation:  .cyan
         }
     }
 }
@@ -448,11 +454,21 @@ struct ProfileEditorView: View {
         self.onCancel = onCancel
     }
 
+    /// Which categories show up in the sidebar. The Automation pane
+    /// holds app-wide settings (UserDefaults), so it's only relevant
+    /// when the editor is opened via Bromure → Preferences (where the
+    /// caller doesn't pass a `storageContext`).
+    private var visibleCategories: [EditorCategory] {
+        EditorCategory.allCases.filter { c in
+            c != .automation || storageContext == nil
+        }
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             HStack(spacing: 0) {
                 // Sidebar
-                List(EditorCategory.allCases, selection: $selectedCategory) { category in
+                List(visibleCategories, selection: $selectedCategory) { category in
                     Label {
                         Text(LocalizedStringKey(category.rawValue))
                     } icon: {
@@ -530,6 +546,7 @@ struct ProfileEditorView: View {
         case .tracing:     tracingSection
         case .appearance:  appearanceSection
         case .resources:   resourcesSection
+        case .automation:  automationSection
         }
     }
 
@@ -1967,6 +1984,108 @@ struct ProfileEditorView: View {
         }
     }
 
+    // MARK: - Automation (app-wide, Preferences only)
+
+    /// Hosts the `automation.enabled` / `automation.port` /
+    /// `automation.bindAddress` toggles. These drive `ACAutomationServer`,
+    /// which in turn powers `Tests/ac-e2e.mjs` (via HTTP) and the
+    /// `bromure-ac mcp` stdio subcommand (which wraps the same HTTP API).
+    /// Settings are stored in UserDefaults, NOT the profile JSON.
+    @ViewBuilder
+    private var automationSection: some View {
+        let store = AutomationDefaultsStore()
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Automation API & MCP server")
+                .font(.headline)
+            Text("Bromure AC exposes an HTTP API on the loopback interface that lets external tools manage profiles and sessions. The bundled `bromure-ac mcp` subcommand wraps the same surface for AI agents (Claude Code, Claude Desktop). These settings apply app-wide.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Toggle(isOn: store.enabledBinding) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Enable automation server")
+                    Text(store.enabled
+                         ? "Listening on \(store.bindAddress):\(store.port). Toggling this off stops the server immediately; the MCP subcommand will no longer reach the app."
+                         : "Off — the HTTP API and the MCP subcommand are unavailable.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.switch)
+
+            Divider()
+
+            HStack(spacing: 8) {
+                Text("Port")
+                    .frame(width: 100, alignment: .trailing)
+                TextField("", value: store.portBinding, formatter: Self.portFormatter)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 90)
+                Text("(default: 9223)")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            }
+
+            HStack(spacing: 8) {
+                Text("Bind address")
+                    .frame(width: 100, alignment: .trailing)
+                TextField("127.0.0.1", text: store.bindAddressBinding)
+                    .textFieldStyle(.roundedBorder)
+                    .frame(width: 160)
+                if store.bindAddress != "127.0.0.1" && !store.bindAddress.isEmpty {
+                    Label("Non-loopback bind exposes the API to the network. The MCP server has no auth.", systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+                Spacer()
+            }
+
+            Text("Port and bind address take effect the next time the server starts. Toggling the switch off and on applies them now.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+
+            Divider()
+
+            Text("MCP client configuration")
+                .font(.headline)
+            Text("Add this to `~/.config/claude-code/.mcp.json` (or your MCP client's equivalent):")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(Self.mcpConfigSnippet)
+                .font(.system(size: 11, design: .monospaced))
+                .textSelection(.enabled)
+                .padding(8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(nsColor: .textBackgroundColor),
+                            in: RoundedRectangle(cornerRadius: 6))
+
+            Spacer()
+        }
+        .padding(.top, 4)
+    }
+
+    private static let portFormatter: NumberFormatter = {
+        let f = NumberFormatter()
+        f.allowsFloats = false
+        f.minimum = 1
+        f.maximum = 65535
+        return f
+    }()
+
+    private static let mcpConfigSnippet: String =
+        #"""
+        {
+          "mcpServers": {
+            "bromure-ac": {
+              "command": "/Applications/Bromure Agentic Coding.app/Contents/MacOS/bromure-ac",
+              "args": ["mcp"]
+            }
+          }
+        }
+        """#
+
     // MARK: - MCP servers
 
     private var mcpSection: some View {
@@ -3310,5 +3429,60 @@ struct SSHKeyView: View {
         }
         .padding()
         .frame(width: 540, height: 280)
+    }
+}
+
+// MARK: - Automation defaults bridge
+
+/// Read/write the app-wide automation settings stored in UserDefaults,
+/// and live-toggle the HTTP server on the AC delegate when the user flips
+/// the switch. Used only by the Preferences "Automation" pane.
+@MainActor
+private struct AutomationDefaultsStore {
+    private let std = UserDefaults.standard
+
+    var enabled: Bool {
+        // The delegate's `startAutomationServerIfNeeded` defaults this to
+        // true on first launch. Read what's in defaults, with a true
+        // fallback so a brand-new Preferences open shows the on state.
+        std.object(forKey: "automation.enabled") as? Bool ?? true
+    }
+    var port: Int {
+        let n = std.integer(forKey: "automation.port")
+        return n > 0 ? n : 9223
+    }
+    var bindAddress: String {
+        std.string(forKey: "automation.bindAddress") ?? "127.0.0.1"
+    }
+
+    var enabledBinding: Binding<Bool> {
+        Binding(
+            get: { self.enabled },
+            set: { on in
+                self.std.set(on, forKey: "automation.enabled")
+                guard let d = NSApp.delegate as? ACAppDelegate else { return }
+                if on {
+                    d.startAutomationServerIfNeeded()
+                } else {
+                    d.stopAutomationServer()
+                }
+            }
+        )
+    }
+
+    var portBinding: Binding<Int> {
+        Binding(
+            get: { self.port },
+            set: { v in self.std.set(max(1, min(65535, v)), forKey: "automation.port") }
+        )
+    }
+
+    var bindAddressBinding: Binding<String> {
+        Binding(
+            get: { self.bindAddress },
+            set: { v in
+                self.std.set(v.isEmpty ? "127.0.0.1" : v, forKey: "automation.bindAddress")
+            }
+        )
     }
 }
