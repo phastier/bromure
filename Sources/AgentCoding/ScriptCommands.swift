@@ -337,8 +337,14 @@ final class BromureACCloseSessionCommand: NSScriptCommand {
             let key = directParameter as? String ?? ""
             guard let profile = findProfile(key) else { return "error: profile not found" as Any }
             // Find the open session window for this profile and close it.
+            // `isReleasedWhenClosed = false` keeps closed windows in
+            // NSApp.windows until they fully deallocate, so filter to
+            // visible ones — otherwise we can pick a stale hidden
+            // window and performClose silently no-ops.
             for win in NSApp.windows {
-                if let session = win as? TabbedSessionWindow, session.profile.id == profile.id {
+                if let session = win as? TabbedSessionWindow,
+                   session.profile.id == profile.id,
+                   session.isVisible {
                     session.performClose(nil)
                     return "ok" as Any
                 }
@@ -352,7 +358,15 @@ final class BromureACCloseSessionCommand: NSScriptCommand {
 final class BromureACListSessionsCommand: NSScriptCommand {
     override func performDefaultImplementation() -> Any? {
         onMain {
-            let sessions = NSApp.windows.compactMap { $0 as? TabbedSessionWindow }
+            // Filter to visible windows: TabbedSessionWindow uses
+            // `isReleasedWhenClosed = false`, so a closed session
+            // stays in NSApp.windows (hidden) until its strong refs
+            // drop. From a scripting perspective those sessions are
+            // gone — exposing them surprises clients (and breaks the
+            // close/list round-trip in the e2e suite).
+            let sessions = NSApp.windows
+                .compactMap { $0 as? TabbedSessionWindow }
+                .filter { $0.isVisible }
             let arr: [[String: Any]] = sessions.map { s in
                 [
                     "profileId":   s.profile.id.uuidString,
